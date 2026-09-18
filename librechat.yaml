@@ -1,0 +1,9 @@
+version: 1.3.16
+
+mcpServers:
+  chap-libre-toolkit:
+    type: streamable-http
+    url: https://chap-libre-mcp-toolkit.onrender.com/mcp
+    headers:
+      Authorization: "Bearer FT6Oj6-Pl30vZQDKPbrnBK7jd04sLTeVBt3T8dktY8c"
+    timeout: 60000
