@@ -23,3 +23,11 @@ endpoints:
       titleConvo: true
       titleModel: "@cf/meta/llama-3.1-8b-instruct"
       modelDisplayLabel: "Cloudflare Workers AI"
+
+mcpServers:
+  chap-libre-toolkit:
+    type: streamable-http
+    url: https://chap-libre-mcp-toolkit.onrender.com/mcp
+    headers:
+      Authorization: "Bearer FT6Oj6-Pl30vZQDKPbrnBK7jd04sLTeVBt3T8dktY8c"
+    timeout: 60000
