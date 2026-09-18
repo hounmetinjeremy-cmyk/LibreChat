@@ -1,8 +1,12 @@
 version: 1.2.1
 endpoints:
+  google:
+    apiKey: "user_provided"
+  anthropic:
+    apiKey: "user_provided"
   custom:
     - name: "Groq"
-      apiKey: "${GROQ_API_KEY}"
+      apiKey: "user_provided"
       baseURL: "https://api.groq.com/openai/v1"
       models:
         default: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
