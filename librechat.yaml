@@ -14,3 +14,12 @@ endpoints:
       titleConvo: true
       titleModel: "llama-3.1-8b-instant"
       modelDisplayLabel: "Groq"
+    - name: "Workers AI"
+      apiKey: "${CLOUDFLARE_API_TOKEN}"
+      baseURL: "https://api.cloudflare.com/client/v4/accounts/26a324f0e475aeaace451e11617c1109/ai/v1"
+      models:
+        default: ["@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/meta/llama-3.1-8b-instruct", "@cf/mistral/mistral-7b-instruct-v0.1"]
+        fetch: false
+      titleConvo: true
+      titleModel: "@cf/meta/llama-3.1-8b-instruct"
+      modelDisplayLabel: "Cloudflare Workers AI"
