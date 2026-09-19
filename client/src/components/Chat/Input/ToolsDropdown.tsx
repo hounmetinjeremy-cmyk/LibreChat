@@ -363,8 +363,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     });
   }
 
-  const { availableMCPServers } = mcpServerManager ?? {};
-  if (canUseMcp && availableMCPServers && availableMCPServers.length > 0) {
+  if (canUseMcp && mcpServerManager) {
     dropdownItems.push({
       hideOnClick: false,
       render: (props) => <MCPSubMenu {...props} placeholder={mcpPlaceholder} />,
