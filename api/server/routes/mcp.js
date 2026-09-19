@@ -1270,10 +1270,6 @@ router.get(
   '/servers/:serverName',
   requireJwtAuth,
   checkMCPUsePermissions,
-  canAccessMCPServerResource({
-    requiredPermission: PermissionBits.VIEW,
-    resourceIdParam: 'serverName',
-  }),
   getMCPServerById,
 );
 
@@ -1288,10 +1284,6 @@ router.patch(
   '/servers/:serverName',
   requireJwtAuth,
   checkMCPCreate,
-  canAccessMCPServerResource({
-    requiredPermission: PermissionBits.EDIT,
-    resourceIdParam: 'serverName',
-  }),
   updateMCPServerController,
 );
 
@@ -1305,10 +1297,6 @@ router.delete(
   '/servers/:serverName',
   requireJwtAuth,
   checkMCPCreate,
-  canAccessMCPServerResource({
-    requiredPermission: PermissionBits.DELETE,
-    resourceIdParam: 'serverName',
-  }),
   (req, res) => deleteMCPServerController(req, res, maybeUninstallOAuthMCP),
 );
 
