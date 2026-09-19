@@ -18,8 +18,8 @@ endpoints:
       apiKey: "${CLOUDFLARE_API_TOKEN}"
       baseURL: "https://api.cloudflare.com/client/v4/accounts/26a324f0e475aeaace451e11617c1109/ai/v1"
       models:
-        default: ["@cf/zai-org/glm-5.3-flash", "@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]
-        fetch: true
+        default: ["@cf/moonshotai/kimi-k2.7-code", "@cf/zai-org/glm-5.3", "@cf/zai-org/glm-5.3-flash", "@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]
+        fetch: false
       titleConvo: true
       titleModel: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
       modelDisplayLabel: "Cloudflare Workers AI"
@@ -30,4 +30,10 @@ mcpServers:
     url: https://chap-libre-mcp-toolkit.onrender.com/mcp
     headers:
       Authorization: "Bearer ${MCP_AUTH_TOKEN}"
+    timeout: 60000
+  render:
+    type: streamable-http
+    url: https://render-mcp-server-6za1.onrender.com/mcp
+    headers:
+      Authorization: "Bearer ${RENDER_MCP_TOKEN}"
     timeout: 60000
