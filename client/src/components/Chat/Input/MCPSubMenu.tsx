@@ -1,9 +1,10 @@
 import React from 'react';
 import * as Ariakit from '@ariakit/react';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Plus } from 'lucide-react';
 import { MCPIcon, PinIcon } from '@librechat/client';
 import MCPServerMenuItem from '~/components/MCP/MCPServerMenuItem';
 import MCPConfigDialog from '~/components/MCP/MCPConfigDialog';
+import AddCustomMCPServerDialog from '~/components/MCP/AddCustomMCPServerDialog';
 import { useMCPRefresh } from '~/hooks/MCP/useMCPRefresh';
 import { useBadgeRowContext } from '~/Providers';
 import { useLocalize } from '~/hooks';
@@ -27,6 +28,8 @@ const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
 
     const isOpen = menuStore.useState('open');
     const configDialogOpen = mcpServerManager?.getConfigDialogProps()?.isOpen === true;
+    const [isAddCustomOpen, setIsAddCustomOpen] = React.useState(false);
+
     useMCPRefresh({
       enabled:
         (isOpen || configDialogOpen) && (mcpServerManager?.selectableServers.length ?? 0) > 0,
@@ -48,10 +51,6 @@ const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
       toggleServerSelection,
       getServerStatusIconProps,
     } = mcpServerManager;
-
-    if (!selectableServers || selectableServers.length === 0) {
-      return null;
-    }
 
     const configDialogProps = getConfigDialogProps();
 
@@ -118,11 +117,38 @@ const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
                 />
               ))}
             </div>
+
+            {selectableServers.length > 0 && (
+              <div className="my-1 h-px bg-border-light" aria-hidden="true" />
+            )}
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                menuStore.hide();
+                setIsAddCustomOpen(true);
+              }}
+              className={cn(
+                'flex w-full cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2',
+                'text-sm text-text-secondary outline-none transition-all duration-150',
+                'hover:bg-surface-hover hover:text-text-primary',
+              )}
+            >
+              <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-surface-tertiary">
+                <Plus className="h-4 w-4" aria-hidden="true" />
+              </div>
+              <span>Ajouter un connecteur personnalisé</span>
+            </button>
           </Ariakit.Menu>
         </Ariakit.MenuProvider>
         {configDialogProps && (
           <MCPConfigDialog {...configDialogProps} storageContextKey={storageContextKey} />
         )}
+        <AddCustomMCPServerDialog
+          isOpen={isAddCustomOpen}
+          onOpenChange={setIsAddCustomOpen}
+        />
       </>
     );
   },
