@@ -18,7 +18,7 @@ endpoints:
       apiKey: "${CLOUDFLARE_API_TOKEN}"
       baseURL: "https://api.cloudflare.com/client/v4/accounts/26a324f0e475aeaace451e11617c1109/ai/v1"
       models:
-        default: ["@cf/moonshotai/kimi-k2.6", "@cf/zai-org/glm-5.3-flash", "@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]
+        default: ["@cf/moonshotai/kimi-k2.7-code", "@cf/zai-org/glm-5.3", "@cf/zai-org/glm-5.3-flash", "@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]
         fetch: false
       titleConvo: true
       titleModel: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
