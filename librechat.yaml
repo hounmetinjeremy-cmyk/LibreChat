@@ -42,3 +42,56 @@ mcpServers:
     url: https://mcp.cloudflare.com/mcp
     requiresOAuth: true
     timeout: 60000
+
+# ---------------------------------------------------------------------------
+# Continuité : l'IA garde en mémoire la tâche en cours, même si la page
+# redémarre, si le serveur plante ou si la conversation devient très longue.
+# ---------------------------------------------------------------------------
+
+# 1) Mémoire persistante (stockée en base, réinjectée à chaque message)
+memory:
+  disabled: false
+  personalize: true
+  tokenLimit: 8000
+  messageWindowSize: 8
+  validKeys:
+    - projet
+    - en_cours
+    - fait
+    - a_faire
+    - regles
+  agent:
+    provider: "Workers AI"
+    model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    instructions: |
+      Tu tiens la mémoire de travail de l'utilisateur. Écris en français, de façon courte et précise.
+      - "en_cours" : la tâche exacte en cours et l'étape actuelle (remplace l'ancienne valeur à chaque changement).
+      - "fait" : ce qui est terminé, avec les identifiants utiles (noms de ressources, ids, chemins).
+      - "a_faire" : les prochaines étapes, dans l'ordre.
+      - "projet" : le but de chaque projet. "regles" : les préférences durables de l'utilisateur.
+      Mets à jour dès qu'une tâche démarre, avance, échoue ou se termine.
+      Ne stocke jamais de mot de passe, de clé API ni de token.
+    model_parameters:
+      temperature: 0.1
+
+# 2) Modèle par défaut avec consignes de continuité et fenêtre de contexte élargie
+modelSpecs:
+  enforce: false
+  prioritize: true
+  list:
+    - name: "kimi-continuite"
+      label: "Kimi (avec continuité)"
+      default: true
+      preset:
+        endpoint: "Workers AI"
+        model: "@cf/moonshotai/kimi-k2.7-code"
+        maxContextTokens: 100000
+        promptPrefix: |
+          Tu réponds toujours en français.
+          Règles de continuité :
+          1. Avant d'agir, relis la mémoire (tâche en cours, fait, à faire). Ne repose jamais une question dont la réponse est dans la conversation ou la mémoire.
+          2. Quand tu démarres une tâche, note-la dans la mémoire (en_cours). Mets à jour après chaque étape terminée.
+          3. Si un outil échoue, est annulé ou si la conversation semble avoir été coupée : dis-le en une phrase, vérifie l'état réel (GitHub, Cloudflare, Render), puis reprends exactement là où tu t'étais arrêté, sans tout recommencer.
+          4. Si l'utilisateur écrit "??", "continue" ou "alors ?", reprends la tâche en cours sans poser de nouvelles questions.
+          5. Avance par petites étapes : un seul fichier par envoi GitHub.
+          Projet Center : fork GitHub food-delivery-multivendor vers Cloudflare (Worker center-api, base D1 center-db, bucket R2 center-storage).
