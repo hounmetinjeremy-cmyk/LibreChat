@@ -39,6 +39,6 @@ mcpServers:
     timeout: 60000
   cloudflare:
     type: streamable-http
-    url: https://bindings.mcp.cloudflare.com/mcp
+    url: https://mcp.cloudflare.com/mcp
     requiresOAuth: true
     timeout: 60000
