@@ -37,3 +37,9 @@ mcpServers:
     headers:
       Authorization: "Bearer ${RENDER_MCP_TOKEN}"
     timeout: 60000
+  cloudflare:
+    type: streamable-http
+    url: https://mcp-cloudflare.onrender.com/mcp
+    headers:
+      Authorization: "Bearer ${CLOUDFLARE_MCP_TOKEN}"
+    timeout: 60000
