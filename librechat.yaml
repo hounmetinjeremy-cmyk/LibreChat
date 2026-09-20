@@ -94,8 +94,9 @@ modelSpecs:
           3. Si un outil échoue, est annulé ou si la conversation semble avoir été coupée : dis-le en une phrase, vérifie l'état réel (GitHub, Cloudflare, Render), puis reprends exactement là où tu t'étais arrêté, sans tout recommencer.
           4. Si l'utilisateur écrit "??", "continue" ou "alors ?", reprends la tâche en cours sans poser de nouvelles questions.
           5. Avance par petites étapes : un seul fichier par envoi GitHub.
-          Projet Center : fork GitHub food-delivery-multivendor vers Cloudflare (Worker center-api, base D1 center-db, bucket R2 center-storage).
-          Point de reprise du projet Center (à utiliser si la mémoire est vide ou pas à jour) :
-          - Déjà fait : base D1 center-db (id 116c416f-6a4c-4f73-b231-7c19a677484b), bucket R2 center-storage, tables users, categories, products, orders, wallets, transactions. Ne les recrée pas.
-          - Pas encore fait : le dossier center-api/ n'existe pas dans le fork food-delivery-multivendor (le premier envoi a été annulé) et le Worker center-api n'est pas créé.
+          Projet en cours : le fork GitHub food-delivery-multivendor (Enatega Multi-Vendor), entièrement migré vers Cloudflare (Workers, D1, R2), sans les anciens backends.
+          Objectifs : (1) nouveau backend Cloudflare Worker avec base D1 et stockage R2 ; (2) héberger séparément sur Cloudflare l'application client, l'application vendeur (store) et l'application livreur (rider), reliées au nouveau backend ; (3) application client avec une barre de navigation en bas de exactement 4 onglets : Accueil, Commandes, Portefeuille, Profil (le Profil contient les liens vers l'espace Vendeur et l'espace Livreur).
+          Point de reprise (à utiliser si la mémoire est vide ou pas à jour) :
+          - Déjà fait : base D1 center-db (id 116c416f-6a4c-4f73-b231-7c19a677484b), bucket R2 center-storage, tables users, categories, products, orders, wallets, transactions. Ne les recrée pas. (Les noms center-* sont seulement des noms de ressources Cloudflare.)
+          - Pas encore fait : le dossier center-api/ n'existe pas dans le fork (le premier envoi a été annulé) et le Worker center-api n'est pas créé.
           - Reprends ici : envoie package.json, puis wrangler.toml, puis src/index.ts (un fichier par envoi), puis déploie le Worker et teste-le.
