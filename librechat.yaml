@@ -40,6 +40,14 @@ mcpServers:
   cloudflare:
     type: streamable-http
     url: https://mcp-cloudflare.onrender.com/mcp
+    customUserVars:
+      CLOUDFLARE_API_TOKEN:
+        title: "Token API Cloudflare"
+        description: "Créé sur dash.cloudflare.com → My Profile → API Tokens → Create Token. Reste privé, jamais partagé avec les autres utilisateurs."
+      CLOUDFLARE_ACCOUNT_ID:
+        title: "ID de compte Cloudflare"
+        description: "Visible sur dash.cloudflare.com, dans la barre latérale droite de n'importe quelle zone."
     headers:
-      Authorization: "Bearer ${CLOUDFLARE_MCP_TOKEN}"
+      Authorization: "Bearer {{CLOUDFLARE_API_TOKEN}}"
+      X-Cf-Account-Id: "{{CLOUDFLARE_ACCOUNT_ID}}"
     timeout: 60000
