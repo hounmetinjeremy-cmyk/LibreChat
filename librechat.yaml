@@ -39,11 +39,6 @@ mcpServers:
     timeout: 60000
   cloudflare:
     type: streamable-http
-    url: https://mcp-cloudflare.onrender.com/mcp
-    customUserVars:
-      CLOUDFLARE_API_TOKEN:
-        title: "Connexion Cloudflare"
-        description: "1) Va sur dash.cloudflare.com et connecte-toi. 2) Clique sur ton profil (en haut à droite) → 'My Profile' → onglet 'API Tokens'. 3) Clique 'Create Token', choisis le modèle 'Edit Cloudflare Workers', puis 'Continue to summary' → 'Create Token'. 4) Copie le code affiché et colle-le ici. C'est tout — aucune autre information n'est nécessaire."
-    headers:
-      Authorization: "Bearer {{CLOUDFLARE_API_TOKEN}}"
+    url: https://bindings.mcp.cloudflare.com/mcp
+    requiresOAuth: true
     timeout: 60000
