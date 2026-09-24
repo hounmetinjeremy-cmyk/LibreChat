@@ -16,7 +16,7 @@ endpoints:
       modelDisplayLabel: "Groq"
     - name: "Workers AI"
       apiKey: "${CLOUDFLARE_API_TOKEN}"
-      baseURL: "https://api.cloudflare.com/client/v4/accounts/26a324f0e475aeaace451e11617c1109/ai/v1"
+      baseURL: "https://api.cloudflare.com/client/v4/accounts/26a324f0e475aeaace451e1617c1109/ai/v1"
       models:
         default: ["@cf/moonshotai/kimi-k2.7-code", "@cf/zai-org/glm-5.3", "@cf/zai-org/glm-5.3-flash", "@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]
         fetch: false
@@ -34,18 +34,6 @@ endpoints:
       modelDisplayLabel: "DeepSeek"
 
 mcpServers:
-  chap-libre-toolkit:
-    type: streamable-http
-    url: https://chap-libre-mcp-toolkit.onrender.com/mcp
-    headers:
-      Authorization: "Bearer ${MCP_AUTH_TOKEN}"
-    timeout: 60000
-  render:
-    type: streamable-http
-    url: https://render-mcp-server-6za1.onrender.com/mcp
-    headers:
-      Authorization: "Bearer ${RENDER_MCP_TOKEN}"
-    timeout: 60000
   cloudflare:
     type: streamable-http
     url: https://mcp.cloudflare.com/mcp
