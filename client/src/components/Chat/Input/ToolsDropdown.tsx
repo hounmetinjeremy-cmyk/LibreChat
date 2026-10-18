@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import * as Ariakit from '@ariakit/react';
 import { TooltipAnchor, DropdownPopup, PinIcon, VectorIcon } from '@librechat/client';
-import { Brain, Globe, ScrollText, Settings, Settings2, TerminalSquareIcon } from 'lucide-react';
+import { Brain, Globe, Plus, ScrollText, Settings, TerminalSquareIcon } from 'lucide-react';
 import {
   AuthType,
   Permissions,
@@ -387,7 +387,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
           )}
         >
           <div className="flex w-full items-center justify-center gap-2">
-            <Settings2 className="size-5" aria-hidden="true" />
+            <Plus className="size-5" aria-hidden="true" />
           </div>
         </Ariakit.MenuButton>
       }
