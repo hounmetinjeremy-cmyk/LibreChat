@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import * as Ariakit from '@ariakit/react';
 import { TooltipAnchor, DropdownPopup, VectorIcon, MCPIcon } from '@librechat/client';
 import {
+  Blocks,
   Brain,
   Camera,
   Check,
@@ -33,10 +34,8 @@ import {
   useAgentCapabilities,
 } from '~/hooks';
 import { useMCPRefresh } from '~/hooks/MCP/useMCPRefresh';
-import MCPServerMenuItem from '~/components/MCP/MCPServerMenuItem';
 import MCPConfigDialog from '~/components/MCP/MCPConfigDialog';
 import AddCustomMCPServerDialog from '~/components/MCP/AddCustomMCPServerDialog';
-import { useGetStartupConfig } from '~/data-provider';
 import { useBadgeRowContext } from '~/Providers';
 import { cn } from '~/utils';
 
@@ -99,7 +98,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const localize = useLocalize();
   const { user } = useAuthContext();
   const context = useBadgeRowContext();
-  const { data: startupConfig } = useGetStartupConfig();
 
   const {
     codeEnabled,
@@ -141,6 +139,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const [isPopoverActive, setIsPopoverActive] = useState(false);
   const [view, setView] = useState<MenuView>('root');
   const [isAddCustomOpen, setIsAddCustomOpen] = useState(false);
+  const [isConnectorsMenuOpen, setIsConnectorsMenuOpen] = useState(false);
   const isDisabled = disabled ?? false;
 
   const {
@@ -161,7 +160,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   const selectableServers = mcpServerManager?.selectableServers ?? [];
 
-  /** Rafraîchit la liste des serveurs MCP tant que le panneau est ouvert. */
+  /** Rafraîchit la liste des connecteurs tant que le panneau est ouvert. */
   useMCPRefresh({
     enabled: isPopoverActive && view === 'mcp' && selectableServers.length > 0,
   });
@@ -170,6 +169,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   useEffect(() => {
     if (!isPopoverActive) {
       setView('root');
+      setIsConnectorsMenuOpen(false);
     }
   }, [isPopoverActive]);
 
@@ -230,8 +230,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     const newValue = !memory?.toggleState;
     memory?.debouncedChange({ value: newValue });
   }, [memory]);
-
-  const mcpPlaceholder = startupConfig?.interface?.mcpServers?.placeholder;
 
   /** Trois raccourcis en haut du menu, comme dans l'application Claude. */
   const attachTiles = [
@@ -424,7 +422,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     });
   }
 
-  /** Artefacts et Serveurs MCP ouvrent leur panneau dans le même menu. */
+  /** Artefacts et Connecteurs ouvrent leur panneau dans le même menu. */
   if (artifactsEnabled && artifacts) {
     rootItems.push({
       hideOnClick: false,
@@ -440,7 +438,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
           >
             <ToolRow
               Icon={WandSparkles}
-              label={localize('com_ui_artifacts')}
+              label="Artefacts"
               right={<ChevronRight className="size-4" aria-hidden="true" />}
             />
           </button>
@@ -463,8 +461,8 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
             className="flex w-full items-center gap-3 py-1 text-left"
           >
             <ToolRow
-              Icon={MCPIcon}
-              label={localize('com_ui_mcp_servers')}
+              Icon={Blocks}
+              label="Connecteurs"
               right={<ChevronRight className="size-4" aria-hidden="true" />}
             />
           </button>
@@ -485,7 +483,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
         >
           <ChevronLeft className="size-5" aria-hidden="true" />
         </button>
-        <span className="font-medium">{localize('com_ui_artifacts')}</span>
+        <span className="font-medium">Artefacts</span>
       </div>
       <button
         type="button"
@@ -497,7 +495,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
         }}
         className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-surface-hover"
       >
-        <span>{localize('com_ui_artifacts')}</span>
+        <span>Activer les artefacts</span>
         <ToggleSwitch checked={!!artifacts?.toggleState} />
       </button>
       <button
@@ -508,7 +506,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
         }}
         className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-surface-hover"
       >
-        <span>{localize('com_ui_include_shadcnui' as never)}</span>
+        <span>Inclure shadcn/ui</span>
         {artifacts?.toggleState === ArtifactModes.SHADCNUI && (
           <Check className="size-4" aria-hidden="true" />
         )}
@@ -521,7 +519,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
         }}
         className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-surface-hover"
       >
-        <span>{localize('com_ui_custom_prompt_mode' as never)}</span>
+        <span>Mode prompt personnalisé</span>
         {artifacts?.toggleState === ArtifactModes.CUSTOM && (
           <Check className="size-4" aria-hidden="true" />
         )}
@@ -529,10 +527,10 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     </div>
   );
 
-  /** Panneau Serveurs MCP : liste des serveurs, ajout, et configuration. */
+  /** Panneau Connecteurs : même mise en page que Claude. */
   const mcpConfigDialogProps = mcpServerManager?.getConfigDialogProps?.();
   const mcpPanel = mcpServerManager ? (
-    <div className="w-72">
+    <div className="relative w-72">
       <div className="flex items-center gap-2 px-1 pb-2">
         <button
           type="button"
@@ -542,34 +540,69 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
         >
           <ChevronLeft className="size-5" aria-hidden="true" />
         </button>
-        <span className="font-medium">{mcpPlaceholder ?? localize('com_ui_mcp_servers')}</span>
-      </div>
-      <div className="flex max-h-[320px] flex-col gap-1 overflow-y-auto">
-        {selectableServers.map((server) => (
-          <MCPServerMenuItem
-            key={server.serverName}
-            server={server}
-            isSelected={mcpServerManager.mcpValues?.includes(server.serverName) ?? false}
-            connectionStatus={mcpServerManager.connectionStatus}
-            isInitializing={mcpServerManager.isInitializing}
-            statusIconProps={mcpServerManager.getServerStatusIconProps(server.serverName)}
-            onToggle={mcpServerManager.toggleServerSelection}
-          />
-        ))}
-      </div>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setIsAddCustomOpen(true);
-        }}
-        className="mt-1 flex w-full items-center gap-3 rounded-lg px-2 py-2 text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary"
-      >
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-surface-tertiary">
+        <span className="flex-1 text-center font-medium">Connecteurs</span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsConnectorsMenuOpen((open) => !open);
+          }}
+          aria-label="Ajouter un connecteur"
+          className="rounded p-1 hover:bg-surface-hover"
+        >
           <Plus className="size-5" aria-hidden="true" />
-        </span>
-        <span>{localize('com_ui_add_custom_mcp_server' as never)}</span>
-      </button>
+        </button>
+      </div>
+
+      {isConnectorsMenuOpen && (
+        <div className="absolute right-0 top-10 z-50 flex w-64 flex-col rounded-xl border border-border-light bg-surface-secondary p-1 shadow-lg">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsConnectorsMenuOpen(false);
+            }}
+            className="rounded-lg px-3 py-2 text-left text-sm hover:bg-surface-hover"
+          >
+            Parcourir les connecteurs
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsConnectorsMenuOpen(false);
+              setIsAddCustomOpen(true);
+            }}
+            className="rounded-lg px-3 py-2 text-left text-sm hover:bg-surface-hover"
+          >
+            Ajouter un connecteur personnalisé
+          </button>
+        </div>
+      )}
+
+      <div className="flex max-h-[360px] flex-col gap-1 overflow-y-auto">
+        {selectableServers.map((server) => {
+          const checked = mcpServerManager.mcpValues?.includes(server.serverName) ?? false;
+          return (
+            <button
+              key={server.serverName}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                mcpServerManager.toggleServerSelection(server.serverName);
+              }}
+              className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-surface-hover"
+            >
+              <ToolRow
+                Icon={MCPIcon}
+                label={server.serverName}
+                right={<ToggleSwitch checked={checked} />}
+              />
+            </button>
+          );
+        })}
+      </div>
+
       {mcpConfigDialogProps && (
         <MCPConfigDialog {...mcpConfigDialogProps} storageContextKey={storageContextKey} />
       )}
