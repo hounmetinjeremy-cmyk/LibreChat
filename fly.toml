@@ -8,6 +8,9 @@ primary_region = 'ams'
 
 [build]
 
+[env]
+  ALLOW_REGISTRATION = 'true'
+
 [http_service]
   internal_port = 3080
   force_https = true
