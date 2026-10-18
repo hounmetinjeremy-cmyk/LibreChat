@@ -1,9 +1,12 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import * as Ariakit from '@ariakit/react';
-import { TooltipAnchor, DropdownPopup, PinIcon, VectorIcon } from '@librechat/client';
+import { TooltipAnchor, DropdownPopup, PinIcon, VectorIcon, MCPIcon } from '@librechat/client';
 import {
   Brain,
   Camera,
+  Check,
+  ChevronLeft,
+  ChevronRight,
   FileUp,
   Globe,
   Image as ImageIcon,
@@ -11,6 +14,7 @@ import {
   ScrollText,
   Settings,
   TerminalSquareIcon,
+  WandSparkles,
 } from 'lucide-react';
 import {
   AuthType,
@@ -27,8 +31,10 @@ import {
   useHasMemoryAccess,
   useAgentCapabilities,
 } from '~/hooks';
-import ArtifactsSubMenu from '~/components/Chat/Input/ArtifactsSubMenu';
-import MCPSubMenu from '~/components/Chat/Input/MCPSubMenu';
+import { useMCPRefresh } from '~/hooks/MCP/useMCPRefresh';
+import MCPServerMenuItem from '~/components/MCP/MCPServerMenuItem';
+import MCPConfigDialog from '~/components/MCP/MCPConfigDialog';
+import AddCustomMCPServerDialog from '~/components/MCP/AddCustomMCPServerDialog';
 import { useGetStartupConfig } from '~/data-provider';
 import { useBadgeRowContext } from '~/Providers';
 import { cn } from '~/utils';
@@ -36,6 +42,8 @@ import { cn } from '~/utils';
 interface ToolsDropdownProps {
   disabled?: boolean;
 }
+
+type MenuView = 'root' | 'artifacts' | 'mcp';
 
 /** Ariakit portals to document.body by default, which puts the menu outside every landmark.
  *  Returning null falls back to that default. */
@@ -93,7 +101,10 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const showMemory = canUseMemory && memoryEnabled && user?.personalization?.memories !== false;
 
   const [isPopoverActive, setIsPopoverActive] = useState(false);
+  const [view, setView] = useState<MenuView>('root');
+  const [isAddCustomOpen, setIsAddCustomOpen] = useState(false);
   const isDisabled = disabled ?? false;
+
   const {
     skills,
     memory,
@@ -103,6 +114,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     mcpServerManager,
     codeInterpreter,
     searchApiKeyForm,
+    storageContextKey,
   } = context ?? {};
 
   const { setIsDialogOpen: setIsSearchDialogOpen, menuTriggerRef: searchMenuTriggerRef } =
@@ -117,6 +129,20 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const { isPinned: isArtifactsPinned, setIsPinned: setIsArtifactsPinned } = artifacts ?? {};
   const { isPinned: isSkillsPinned, setIsPinned: setIsSkillsPinned } = skills ?? {};
   const { isPinned: isMemoryPinned, setIsPinned: setIsMemoryPinned } = memory ?? {};
+
+  const selectableServers = mcpServerManager?.selectableServers ?? [];
+
+  /** Rafraîchit la liste des serveurs MCP tant que le panneau est ouvert. */
+  useMCPRefresh({
+    enabled: isPopoverActive && view === 'mcp' && selectableServers.length > 0,
+  });
+
+  /** Quand le menu se ferme, on revient toujours à la liste principale. */
+  useEffect(() => {
+    if (!isPopoverActive) {
+      setView('root');
+    }
+  }, [isPopoverActive]);
 
   const showWebSearchSettings = useMemo(() => {
     const authTypes = webSearchAuthData?.authTypes ?? [];
@@ -178,8 +204,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   const mcpPlaceholder = startupConfig?.interface?.mcpServers?.placeholder;
 
-  const dropdownItems: MenuItemProps[] = [];
-
   /** Trois raccourcis en haut du menu, comme dans l'application Claude. */
   const attachTiles = [
     { id: 'camera', label: 'Appareil photo', Icon: Camera },
@@ -187,7 +211,9 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     { id: 'files', label: 'Fichiers', Icon: FileUp },
   ];
 
-  dropdownItems.push({
+  const rootItems: MenuItemProps[] = [];
+
+  rootItems.push({
     hideOnClick: false,
     render: (props) => (
       <div {...props} data-testid="tools-menu-attach" className="grid grid-cols-3 gap-2 p-1">
@@ -213,7 +239,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   });
 
   if (fileSearchEnabled && canUseFileSearch) {
-    dropdownItems.push({
+    rootItems.push({
       onClick: handleFileSearchToggle,
       hideOnClick: false,
       render: (props) => (
@@ -245,7 +271,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   }
 
   if (canUseWebSearch && webSearchEnabled) {
-    dropdownItems.push({
+    rootItems.push({
       onClick: handleWebSearchToggle,
       hideOnClick: false,
       render: (props) => (
@@ -299,7 +325,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   }
 
   if (canUseSkills && skillsEnabled) {
-    dropdownItems.push({
+    rootItems.push({
       onClick: handleSkillsToggle,
       hideOnClick: false,
       render: (props) => (
@@ -331,7 +357,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   }
 
   if (showMemory) {
-    dropdownItems.push({
+    rootItems.push({
       onClick: handleMemoryToggle,
       hideOnClick: false,
       render: (props) => (
@@ -363,7 +389,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   }
 
   if (canRunCode && codeEnabled) {
-    dropdownItems.push({
+    rootItems.push({
       onClick: handleCodeInterpreterToggle,
       hideOnClick: false,
       render: (props) => (
@@ -396,29 +422,169 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     });
   }
 
+  /** Artefacts et Serveurs MCP : une ligne qui ouvre le panneau dans le même menu. */
   if (artifactsEnabled && setIsArtifactsPinned != null) {
-    dropdownItems.push({
+    rootItems.push({
       hideOnClick: false,
       render: (props) => (
-        <ArtifactsSubMenu
+        <div
           {...props}
-          isArtifactsPinned={isArtifactsPinned ?? false}
-          setIsArtifactsPinned={setIsArtifactsPinned}
-          artifactsMode={artifacts?.toggleState as string}
-          handleArtifactsToggle={handleArtifactsToggle}
-          handleShadcnToggle={handleShadcnToggle}
-          handleCustomToggle={handleCustomToggle}
-        />
+          data-testid="tools-menu-artifacts"
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation();
+            setView('artifacts');
+          }}
+          className="cursor-pointer"
+        >
+          <div className="flex items-center gap-2">
+            <WandSparkles className="icon-md" aria-hidden="true" />
+            <span>{localize('com_ui_artifacts')}</span>
+          </div>
+          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+        </div>
       ),
     });
   }
 
   if (canUseMcp && mcpServerManager) {
-    dropdownItems.push({
+    rootItems.push({
       hideOnClick: false,
-      render: (props) => <MCPSubMenu {...props} placeholder={mcpPlaceholder} />,
+      render: (props) => (
+        <div
+          {...props}
+          data-testid="tools-menu-mcp"
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation();
+            setView('mcp');
+          }}
+          className="cursor-pointer"
+        >
+          <div className="flex items-center gap-2">
+            <MCPIcon className="icon-md" aria-hidden="true" />
+            <span>{localize('com_ui_mcp_servers')}</span>
+          </div>
+          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+        </div>
+      ),
     });
   }
+
+  /** Panneau Artefacts : remplace la liste, avec une flèche retour. */
+  const artifactsPanel = (
+    <div className="w-72">
+      <div className="flex items-center gap-2 px-1 pb-2">
+        <button
+          type="button"
+          onClick={() => setView('root')}
+          aria-label="Retour"
+          className="rounded p-1 hover:bg-surface-hover"
+        >
+          <ChevronLeft className="size-5" aria-hidden="true" />
+        </button>
+        <span className="font-medium">{localize('com_ui_artifacts')}</span>
+      </div>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleShadcnToggle();
+        }}
+        className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-surface-hover"
+      >
+        <span>{localize('com_ui_include_shadcnui' as never)}</span>
+        {artifacts?.toggleState === ArtifactModes.SHADCNUI && (
+          <Check className="size-4" aria-hidden="true" />
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleCustomToggle();
+        }}
+        className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-surface-hover"
+      >
+        <span>{localize('com_ui_custom_prompt_mode' as never)}</span>
+        {artifacts?.toggleState === ArtifactModes.CUSTOM && (
+          <Check className="size-4" aria-hidden="true" />
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleArtifactsToggle();
+        }}
+        className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-surface-hover"
+      >
+        <span>{localize('com_ui_artifacts')}</span>
+        {!!artifacts?.toggleState && <Check className="size-4" aria-hidden="true" />}
+      </button>
+    </div>
+  );
+
+  /** Panneau Serveurs MCP : liste des serveurs, ajout, et configuration. */
+  const mcpConfigDialogProps = mcpServerManager?.getConfigDialogProps?.();
+  const mcpPanel = mcpServerManager ? (
+    <div className="w-72">
+      <div className="flex items-center gap-2 px-1 pb-2">
+        <button
+          type="button"
+          onClick={() => setView('root')}
+          aria-label="Retour"
+          className="rounded p-1 hover:bg-surface-hover"
+        >
+          <ChevronLeft className="size-5" aria-hidden="true" />
+        </button>
+        <span className="font-medium">{localize('com_ui_mcp_servers')}</span>
+      </div>
+      <div className="flex max-h-[320px] flex-col gap-1 overflow-y-auto">
+        {selectableServers.map((server) => (
+          <MCPServerMenuItem
+            key={server.serverName}
+            server={server}
+            isSelected={mcpServerManager.mcpValues?.includes(server.serverName) ?? false}
+            connectionStatus={mcpServerManager.connectionStatus}
+            isInitializing={mcpServerManager.isInitializing}
+            statusIconProps={mcpServerManager.getServerStatusIconProps(server.serverName)}
+            onToggle={mcpServerManager.toggleServerSelection}
+          />
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsAddCustomOpen(true);
+        }}
+        className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+      >
+        <Plus className="size-4" aria-hidden="true" />
+        <span>{localize('com_ui_add_custom_mcp_server' as never)}</span>
+      </button>
+      {mcpConfigDialogProps && (
+        <MCPConfigDialog {...mcpConfigDialogProps} storageContextKey={storageContextKey} />
+      )}
+      <AddCustomMCPServerDialog isOpen={isAddCustomOpen} onOpenChange={setIsAddCustomOpen} />
+    </div>
+  ) : null;
+
+  /** Dans un panneau, le menu n'affiche que ce panneau. */
+  const dropdownItems: MenuItemProps[] =
+    view === 'root'
+      ? rootItems
+      : [
+          {
+            hideOnClick: false,
+            render: (props) => (
+              <div {...props}>{view === 'artifacts' ? artifactsPanel : mcpPanel}</div>
+            ),
+          },
+        ];
 
   if (dropdownItems.length === 0) {
     return null;
