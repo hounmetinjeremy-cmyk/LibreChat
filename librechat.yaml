@@ -18,7 +18,7 @@ endpoints:
       apiKey: "${CLOUDFLARE_API_TOKEN}"
       baseURL: "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1"
       models:
-        default: ["@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/moonshotai/kimi-k2.7-code", "@cf/moonshotai/kimi-k2.6"]
+        default: ["@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/deepseek-ai/deepseek-v4-flash-0731", "@cf/moonshotai/kimi-k2.7-code", "@cf/moonshotai/kimi-k2.6"]
         fetch: false
       titleConvo: true
       titleModel: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
