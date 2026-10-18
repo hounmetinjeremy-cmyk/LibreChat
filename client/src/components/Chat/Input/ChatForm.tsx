@@ -841,8 +841,8 @@ const ChatForm = memo(function ChatForm({
                   '@container flex flex-wrap items-center gap-2 px-2 pb-2',
                   isRTL ? 'flex-row-reverse' : 'flex-row',
                 )}
-              >
-                <div className="shrink-0">
+              >m
+                <div className="sr-only">
                   <AttachFileChat
                     conversation={conversation}
                     disableInputs={disableInputs}

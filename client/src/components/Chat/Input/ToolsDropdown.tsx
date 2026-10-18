@@ -1,7 +1,17 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import * as Ariakit from '@ariakit/react';
 import { TooltipAnchor, DropdownPopup, PinIcon, VectorIcon } from '@librechat/client';
-import { Brain, Globe, Plus, ScrollText, Settings, TerminalSquareIcon } from 'lucide-react';
+import {
+  Brain,
+  Camera,
+  FileUp,
+  Globe,
+  Image as ImageIcon,
+  Plus,
+  ScrollText,
+  Settings,
+  TerminalSquareIcon,
+} from 'lucide-react';
 import {
   AuthType,
   Permissions,
@@ -30,6 +40,14 @@ interface ToolsDropdownProps {
 /** Ariakit portals to document.body by default, which puts the menu outside every landmark.
  *  Returning null falls back to that default. */
 const getMainLandmark = () => document.querySelector<HTMLElement>('main');
+
+/** Ouvre le menu d'envoi de fichiers existant (trombone), sans le dupliquer. */
+const openExistingAttachMenu = () => {
+  const trigger =
+    document.getElementById('attach-file-menu-button') ??
+    document.getElementById('attach-file-button');
+  trigger?.click();
+};
 
 const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const localize = useLocalize();
@@ -161,6 +179,38 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const mcpPlaceholder = startupConfig?.interface?.mcpServers?.placeholder;
 
   const dropdownItems: MenuItemProps[] = [];
+
+  /** Trois raccourcis en haut du menu, comme dans l'application Claude. */
+  const attachTiles = [
+    { id: 'camera', label: 'Appareil photo', Icon: Camera },
+    { id: 'photos', label: 'Photos', Icon: ImageIcon },
+    { id: 'files', label: 'Fichiers', Icon: FileUp },
+  ];
+
+  dropdownItems.push({
+    hideOnClick: false,
+    render: (props) => (
+      <div {...props} data-testid="tools-menu-attach" className="grid grid-cols-3 gap-2 p-1">
+        {attachTiles.map(({ id, label, Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsPopoverActive(false);
+              openExistingAttachMenu();
+            }}
+            className="flex flex-col items-center gap-2 rounded-xl bg-surface-secondary p-3 text-text-primary hover:bg-surface-hover"
+          >
+            <span className="flex size-10 items-center justify-center rounded-full bg-surface-tertiary">
+              <Icon className="size-5" aria-hidden="true" />
+            </span>
+            <span className="text-xs">{label}</span>
+          </button>
+        ))}
+      </div>
+    ),
+  });
 
   if (fileSearchEnabled && canUseFileSearch) {
     dropdownItems.push({
@@ -380,7 +430,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
         <Ariakit.MenuButton
           disabled={isDisabled}
           id="tools-dropdown-button"
-          aria-label="Tools Options"
+          aria-label="Ajouter à la conversation"
           className={cn(
             'flex size-theme-control items-center justify-center rounded-theme-control-round p-1 transition-colors duration-theme-fast hover:bg-surface-composer-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-primary focus-visible:ring-opacity-50',
             isPopoverActive && 'bg-surface-composer-hover',
