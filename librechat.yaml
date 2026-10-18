@@ -16,7 +16,7 @@ endpoints:
       modelDisplayLabel: "Groq"
     - name: "Workers AI"
       apiKey: "${CLOUDFLARE_API_TOKEN}"
-      baseURL: "https://api.cloudflare.com/client/v4/accounts/26a324f0e475aeaace451e11617c1109/ai/v1"
+      baseURL: "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1"
       models:
         default: ["@cf/meta/llama-3.3-70b-instruct-fp8-fast"]
         fetch: false
