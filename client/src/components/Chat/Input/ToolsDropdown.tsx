@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import * as Ariakit from '@ariakit/react';
-import { TooltipAnchor, DropdownPopup, PinIcon, VectorIcon, MCPIcon } from '@librechat/client';
+import { TooltipAnchor, DropdownPopup, VectorIcon, MCPIcon } from '@librechat/client';
 import {
   Brain,
   Camera,
@@ -16,6 +16,7 @@ import {
   TerminalSquareIcon,
   WandSparkles,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import {
   AuthType,
   Permissions,
@@ -56,6 +57,43 @@ const openExistingAttachMenu = () => {
     document.getElementById('attach-file-button');
   trigger?.click();
 };
+
+/** Interrupteur à la manière de Claude : bleu quand c'est activé. */
+const ToggleSwitch = ({ checked }: { checked: boolean }) => (
+  <span
+    className={cn(
+      'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors',
+      checked ? 'bg-blue-600' : 'bg-surface-tertiary',
+    )}
+    aria-hidden="true"
+  >
+    <span
+      className={cn(
+        'inline-block size-5 transform rounded-full bg-white shadow transition-transform',
+        checked ? 'translate-x-5' : 'translate-x-0.5',
+      )}
+    />
+  </span>
+);
+
+/** Une ligne du menu : icône dans un rond, libellé, élément à droite. */
+const ToolRow = ({
+  Icon,
+  label,
+  right,
+}: {
+  Icon: LucideIcon | React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
+  label: string;
+  right?: React.ReactNode;
+}) => (
+  <div className="flex w-full items-center gap-3 py-1">
+    <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-surface-tertiary">
+      <Icon className="size-5" aria-hidden={true} />
+    </span>
+    <span className="flex-1 text-sm text-text-primary">{label}</span>
+    {right}
+  </div>
+);
 
 const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const localize = useLocalize();
@@ -119,16 +157,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   const { setIsDialogOpen: setIsSearchDialogOpen, menuTriggerRef: searchMenuTriggerRef } =
     searchApiKeyForm ?? {};
-  const {
-    isPinned: isSearchPinned,
-    setIsPinned: setIsSearchPinned,
-    authData: webSearchAuthData,
-  } = webSearch ?? {};
-  const { isPinned: isCodePinned, setIsPinned: setIsCodePinned } = codeInterpreter ?? {};
-  const { isPinned: isFileSearchPinned, setIsPinned: setIsFileSearchPinned } = fileSearch ?? {};
-  const { isPinned: isArtifactsPinned, setIsPinned: setIsArtifactsPinned } = artifacts ?? {};
-  const { isPinned: isSkillsPinned, setIsPinned: setIsSkillsPinned } = skills ?? {};
-  const { isPinned: isMemoryPinned, setIsPinned: setIsMemoryPinned } = memory ?? {};
+  const { authData: webSearchAuthData } = webSearch ?? {};
 
   const selectableServers = mcpServerManager?.selectableServers ?? [];
 
@@ -238,49 +267,27 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     ),
   });
 
-  if (fileSearchEnabled && canUseFileSearch) {
-    rootItems.push({
-      onClick: handleFileSearchToggle,
-      hideOnClick: false,
-      render: (props) => (
-        <div {...props} data-testid="tools-menu-file-search">
-          <div className="flex items-center gap-2">
-            <VectorIcon className="icon-md" />
-            <span>{localize('com_assistants_file_search')}</span>
-          </div>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsFileSearchPinned?.(!isFileSearchPinned);
-            }}
-            className={cn(
-              'rounded p-1 transition-all duration-200',
-              'hover:bg-surface-secondary hover:shadow-sm',
-              !isFileSearchPinned && 'text-text-secondary hover:text-text-primary',
-            )}
-            aria-label={isFileSearchPinned ? 'Unpin' : 'Pin'}
-          >
-            <div className="h-4 w-4">
-              <PinIcon unpin={isFileSearchPinned} />
-            </div>
-          </button>
-        </div>
-      ),
-    });
-  }
-
   if (canUseWebSearch && webSearchEnabled) {
     rootItems.push({
-      onClick: handleWebSearchToggle,
       hideOnClick: false,
       render: (props) => (
-        <div {...props}>
-          <div className="flex items-center gap-2">
-            <Globe className="icon-md" aria-hidden="true" />
-            <span>{localize('com_ui_web_search')}</span>
-          </div>
-          <div className="flex items-center gap-1">
+        <div {...props} data-testid="tools-menu-web-search" className="w-full">
+          <div className="flex w-full items-center gap-3 py-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleWebSearchToggle();
+              }}
+              className="flex flex-1 items-center gap-3 text-left"
+            >
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-surface-tertiary">
+                <Globe className="size-5" aria-hidden="true" />
+              </span>
+              <span className="flex-1 text-sm text-text-primary">
+                {localize('com_ui_web_search')}
+              </span>
+            </button>
             {showWebSearchSettings && (
               <button
                 type="button"
@@ -288,35 +295,24 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
                   e.stopPropagation();
                   setIsSearchDialogOpen?.(true);
                 }}
-                className={cn(
-                  'rounded p-1 transition-all duration-200',
-                  'hover:bg-surface-secondary hover:shadow-sm',
-                  'text-text-secondary hover:text-text-primary',
-                )}
+                className="rounded-full p-2 text-text-secondary hover:bg-surface-hover"
                 aria-label="Configure web search"
                 ref={searchMenuTriggerRef}
               >
-                <div className="h-4 w-4">
-                  <Settings className="h-4 w-4" aria-hidden="true" />
-                </div>
+                <Settings className="size-4" aria-hidden="true" />
               </button>
             )}
             <button
               type="button"
+              role="switch"
+              aria-checked={!!webSearch?.toggleState}
               onClick={(e) => {
                 e.stopPropagation();
-                setIsSearchPinned?.(!isSearchPinned);
+                handleWebSearchToggle();
               }}
-              className={cn(
-                'rounded p-1 transition-all duration-200',
-                'hover:bg-surface-secondary hover:shadow-sm',
-                !isSearchPinned && 'text-text-secondary hover:text-text-primary',
-              )}
-              aria-label={isSearchPinned ? 'Unpin' : 'Pin'}
+              aria-label={localize('com_ui_web_search')}
             >
-              <div className="h-4 w-4">
-                <PinIcon unpin={isSearchPinned} />
-              </div>
+              <ToggleSwitch checked={!!webSearch?.toggleState} />
             </button>
           </div>
         </div>
@@ -324,32 +320,52 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     });
   }
 
-  if (canUseSkills && skillsEnabled) {
+  if (fileSearchEnabled && canUseFileSearch) {
     rootItems.push({
-      onClick: handleSkillsToggle,
       hideOnClick: false,
       render: (props) => (
-        <div {...props} data-testid="tools-menu-skills">
-          <div className="flex items-center gap-2">
-            <ScrollText className="icon-md" aria-hidden="true" />
-            <span>{localize('com_ui_skills')}</span>
-          </div>
+        <div {...props} data-testid="tools-menu-file-search" className="w-full">
           <button
             type="button"
+            role="switch"
+            aria-checked={!!fileSearch?.toggleState}
             onClick={(e) => {
               e.stopPropagation();
-              setIsSkillsPinned?.(!isSkillsPinned);
+              handleFileSearchToggle();
             }}
-            className={cn(
-              'rounded p-1 transition-all duration-200',
-              'hover:bg-surface-secondary hover:shadow-sm',
-              !isSkillsPinned && 'text-text-secondary hover:text-text-primary',
-            )}
-            aria-label={isSkillsPinned ? localize('com_ui_unpin') : localize('com_ui_pin')}
+            className="flex w-full items-center gap-3 py-1 text-left"
           >
-            <div className="h-4 w-4">
-              <PinIcon unpin={isSkillsPinned} />
-            </div>
+            <ToolRow
+              Icon={VectorIcon}
+              label={localize('com_assistants_file_search')}
+              right={<ToggleSwitch checked={!!fileSearch?.toggleState} />}
+            />
+          </button>
+        </div>
+      ),
+    });
+  }
+
+  if (canUseSkills && skillsEnabled) {
+    rootItems.push({
+      hideOnClick: false,
+      render: (props) => (
+        <div {...props} data-testid="tools-menu-skills" className="w-full">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={!!skills?.toggleState}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleSkillsToggle();
+            }}
+            className="flex w-full items-center gap-3 py-1 text-left"
+          >
+            <ToolRow
+              Icon={ScrollText}
+              label={localize('com_ui_skills')}
+              right={<ToggleSwitch checked={!!skills?.toggleState} />}
+            />
           </button>
         </div>
       ),
@@ -358,30 +374,24 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   if (showMemory) {
     rootItems.push({
-      onClick: handleMemoryToggle,
       hideOnClick: false,
       render: (props) => (
-        <div {...props} data-testid="tools-menu-memory">
-          <div className="flex items-center gap-2">
-            <Brain className="icon-md" aria-hidden="true" />
-            <span>{localize('com_ui_memory')}</span>
-          </div>
+        <div {...props} data-testid="tools-menu-memory" className="w-full">
           <button
             type="button"
+            role="switch"
+            aria-checked={!!memory?.toggleState}
             onClick={(e) => {
               e.stopPropagation();
-              setIsMemoryPinned?.(!isMemoryPinned);
+              handleMemoryToggle();
             }}
-            className={cn(
-              'rounded p-1 transition-all duration-200',
-              'hover:bg-surface-secondary hover:shadow-sm',
-              !isMemoryPinned && 'text-text-secondary hover:text-text-primary',
-            )}
-            aria-label={isMemoryPinned ? localize('com_ui_unpin') : localize('com_ui_pin')}
+            className="flex w-full items-center gap-3 py-1 text-left"
           >
-            <div className="h-4 w-4">
-              <PinIcon unpin={isMemoryPinned} />
-            </div>
+            <ToolRow
+              Icon={Brain}
+              label={localize('com_ui_memory')}
+              right={<ToggleSwitch checked={!!memory?.toggleState} />}
+            />
           </button>
         </div>
       ),
@@ -390,59 +400,50 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   if (canRunCode && codeEnabled) {
     rootItems.push({
-      onClick: handleCodeInterpreterToggle,
       hideOnClick: false,
       render: (props) => (
-        <div {...props} data-testid="tools-menu-run-code">
-          <div className="flex items-center gap-2">
-            <TerminalSquareIcon className="icon-md" aria-hidden="true" />
-            <span>{localize('com_ui_run_code')}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsCodePinned?.(!isCodePinned);
-              }}
-              className={cn(
-                'rounded p-1 transition-all duration-200',
-                'hover:bg-surface-secondary hover:shadow-sm',
-                !isCodePinned && 'text-text-primary hover:text-text-primary',
-              )}
-              aria-label={isCodePinned ? 'Unpin' : 'Pin'}
-            >
-              <div className="h-4 w-4">
-                <PinIcon unpin={isCodePinned} />
-              </div>
-            </button>
-          </div>
+        <div {...props} data-testid="tools-menu-run-code" className="w-full">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={!!codeInterpreter?.toggleState}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleCodeInterpreterToggle();
+            }}
+            className="flex w-full items-center gap-3 py-1 text-left"
+          >
+            <ToolRow
+              Icon={TerminalSquareIcon}
+              label={localize('com_ui_run_code')}
+              right={<ToggleSwitch checked={!!codeInterpreter?.toggleState} />}
+            />
+          </button>
         </div>
       ),
     });
   }
 
-  /** Artefacts et Serveurs MCP : une ligne qui ouvre le panneau dans le même menu. */
-  if (artifactsEnabled && setIsArtifactsPinned != null) {
+  /** Artefacts et Serveurs MCP ouvrent leur panneau dans le même menu. */
+  if (artifactsEnabled && artifacts) {
     rootItems.push({
       hideOnClick: false,
       render: (props) => (
-        <div
-          {...props}
-          data-testid="tools-menu-artifacts"
-          role="button"
-          tabIndex={0}
-          onClick={(e) => {
-            e.stopPropagation();
-            setView('artifacts');
-          }}
-          className="cursor-pointer"
-        >
-          <div className="flex items-center gap-2">
-            <WandSparkles className="icon-md" aria-hidden="true" />
-            <span>{localize('com_ui_artifacts')}</span>
-          </div>
-          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+        <div {...props} data-testid="tools-menu-artifacts" className="w-full">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setView('artifacts');
+            }}
+            className="flex w-full items-center gap-3 py-1 text-left"
+          >
+            <ToolRow
+              Icon={WandSparkles}
+              label={localize('com_ui_artifacts')}
+              right={<ChevronRight className="size-4" aria-hidden="true" />}
+            />
+          </button>
         </div>
       ),
     });
@@ -452,22 +453,21 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     rootItems.push({
       hideOnClick: false,
       render: (props) => (
-        <div
-          {...props}
-          data-testid="tools-menu-mcp"
-          role="button"
-          tabIndex={0}
-          onClick={(e) => {
-            e.stopPropagation();
-            setView('mcp');
-          }}
-          className="cursor-pointer"
-        >
-          <div className="flex items-center gap-2">
-            <MCPIcon className="icon-md" aria-hidden="true" />
-            <span>{localize('com_ui_mcp_servers')}</span>
-          </div>
-          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+        <div {...props} data-testid="tools-menu-mcp" className="w-full">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setView('mcp');
+            }}
+            className="flex w-full items-center gap-3 py-1 text-left"
+          >
+            <ToolRow
+              Icon={MCPIcon}
+              label={localize('com_ui_mcp_servers')}
+              right={<ChevronRight className="size-4" aria-hidden="true" />}
+            />
+          </button>
         </div>
       ),
     });
@@ -487,6 +487,19 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
         </button>
         <span className="font-medium">{localize('com_ui_artifacts')}</span>
       </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={!!artifacts?.toggleState}
+        onClick={(e) => {
+          e.stopPropagation();
+          handleArtifactsToggle();
+        }}
+        className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-surface-hover"
+      >
+        <span>{localize('com_ui_artifacts')}</span>
+        <ToggleSwitch checked={!!artifacts?.toggleState} />
+      </button>
       <button
         type="button"
         onClick={(e) => {
@@ -513,17 +526,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
           <Check className="size-4" aria-hidden="true" />
         )}
       </button>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          handleArtifactsToggle();
-        }}
-        className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-surface-hover"
-      >
-        <span>{localize('com_ui_artifacts')}</span>
-        {!!artifacts?.toggleState && <Check className="size-4" aria-hidden="true" />}
-      </button>
     </div>
   );
 
@@ -540,7 +542,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
         >
           <ChevronLeft className="size-5" aria-hidden="true" />
         </button>
-        <span className="font-medium">{localize('com_ui_mcp_servers')}</span>
+        <span className="font-medium">{mcpPlaceholder ?? localize('com_ui_mcp_servers')}</span>
       </div>
       <div className="flex max-h-[320px] flex-col gap-1 overflow-y-auto">
         {selectableServers.map((server) => (
@@ -561,9 +563,11 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
           e.stopPropagation();
           setIsAddCustomOpen(true);
         }}
-        className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+        className="mt-1 flex w-full items-center gap-3 rounded-lg px-2 py-2 text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary"
       >
-        <Plus className="size-4" aria-hidden="true" />
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-surface-tertiary">
+          <Plus className="size-5" aria-hidden="true" />
+        </span>
         <span>{localize('com_ui_add_custom_mcp_server' as never)}</span>
       </button>
       {mcpConfigDialogProps && (
