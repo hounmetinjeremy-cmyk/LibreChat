@@ -372,7 +372,7 @@ function BadgeRow({
           </div>
         )}
         {showEphemeralBadges === true && (
-          <>
+          <div className="hidden">
             <WebSearch />
             <CodeInterpreter />
             <FileSearch />
@@ -380,7 +380,7 @@ function BadgeRow({
             <Memory />
             <Artifacts />
             <MCPSelect />
-          </>
+          </div>
         )}
         {ghostBadge && (
           <div
