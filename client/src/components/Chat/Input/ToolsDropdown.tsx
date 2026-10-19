@@ -515,10 +515,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     />
   );
 
-  if (rootRows.length === 0 && !(artifactsEnabled && artifacts) && !(canUseMcp && mcpServerManager)) {
-    /** Rien d'activable : on garde tout de même le bouton « + » pour l'envoi de fichiers. */
-  }
-
   const title =
     view === 'artifacts' ? 'Artefacts' : view === 'mcp' ? 'Connecteurs' : 'Ajouter à la conversation';
 
@@ -537,7 +533,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
               role="dialog"
               aria-label={title}
               data-testid="tools-sheet"
-              className="absolute inset-x-0 bottom-0 flex max-h-[90dvh] flex-col overflow-hidden rounded-t-3xl bg-surface-primary shadow-2xl"
+              className="absolute inset-x-0 bottom-0 flex h-[92dvh] flex-col overflow-hidden rounded-t-3xl bg-surface-primary shadow-2xl"
               style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
             >
               <div className="flex justify-center pb-1 pt-3">
@@ -582,10 +578,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
               <div className="flex-1 overflow-y-auto px-4 pb-6">
                 {view === 'root' && (
                   <>
-                    <div
-                      data-testid="tools-menu-attach"
-                      className="grid grid-cols-3 gap-2 pb-4"
-                    >
+                    <div data-testid="tools-menu-attach" className="grid grid-cols-3 gap-2 pb-4">
                       {attachTiles.map(({ id, label, Icon }) => (
                         <button
                           key={id}
