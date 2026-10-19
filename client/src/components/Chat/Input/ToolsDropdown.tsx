@@ -96,7 +96,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   const {
     codeEnabled,
-    memoryEnabled,
     webSearchEnabled,
     artifactsEnabled,
     fileSearchEnabled,
@@ -128,8 +127,9 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     permission: Permissions.USE,
   });
 
+  /** Mémoire : toujours visible dans le menu « + » dès que l'utilisateur y a accès. */
   const canUseMemory = useHasMemoryAccess();
-  const showMemory = canUseMemory && memoryEnabled && user?.personalization?.memories !== false;
+  const showMemory = canUseMemory;
 
   const [isOpen, setIsOpen] = useState(false);
   const [view, setView] = useState<MenuView>('root');
