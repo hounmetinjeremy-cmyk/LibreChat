@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import * as Ariakit from '@ariakit/react';
-import { TooltipAnchor, DropdownPopup, VectorIcon, MCPIcon } from '@librechat/client';
+import { createPortal } from 'react-dom';
+import { TooltipAnchor, VectorIcon, MCPIcon } from '@librechat/client';
 import {
   Blocks,
   Brain,
@@ -16,6 +16,7 @@ import {
   Settings,
   TerminalSquareIcon,
   WandSparkles,
+  X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -25,7 +26,6 @@ import {
   PermissionTypes,
   defaultAgentCapabilities,
 } from 'librechat-data-provider';
-import type { MenuItemProps } from '~/common';
 import {
   useLocalize,
   useHasAccess,
@@ -44,10 +44,6 @@ interface ToolsDropdownProps {
 }
 
 type MenuView = 'root' | 'artifacts' | 'mcp';
-
-/** Ariakit portals to document.body by default, which puts the menu outside every landmark.
- *  Returning null falls back to that default. */
-const getMainLandmark = () => document.querySelector<HTMLElement>('main');
 
 /** Ouvre le menu d'envoi de fichiers existant (trombone), sans le dupliquer. */
 const openExistingAttachMenu = () => {
@@ -75,7 +71,7 @@ const ToggleSwitch = ({ checked }: { checked: boolean }) => (
   </span>
 );
 
-/** Une ligne du menu : icône dans un rond, libellé, élément à droite. */
+/** Une ligne de la feuille : icône dans un rond, libellé, élément à droite. */
 const ToolRow = ({
   Icon,
   label,
@@ -85,11 +81,11 @@ const ToolRow = ({
   label: string;
   right?: React.ReactNode;
 }) => (
-  <div className="flex w-full items-center gap-3 py-1">
-    <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-surface-tertiary">
+  <div className="flex w-full items-center gap-3 py-2">
+    <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-surface-tertiary">
       <Icon className="size-5" aria-hidden={true} />
     </span>
-    <span className="flex-1 text-sm text-text-primary">{label}</span>
+    <span className="flex-1 text-left text-base text-text-primary">{label}</span>
     {right}
   </div>
 );
@@ -136,7 +132,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const canUseMemory = useHasMemoryAccess();
   const showMemory = canUseMemory && memoryEnabled && user?.personalization?.memories !== false;
 
-  const [isPopoverActive, setIsPopoverActive] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
   const [view, setView] = useState<MenuView>('root');
   const [isAddCustomOpen, setIsAddCustomOpen] = useState(false);
   const [isConnectorsMenuOpen, setIsConnectorsMenuOpen] = useState(false);
@@ -160,18 +156,32 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   const selectableServers = mcpServerManager?.selectableServers ?? [];
 
-  /** Rafraîchit la liste des connecteurs tant que le panneau est ouvert. */
+  /** Rafraîchit la liste des connecteurs tant que la feuille est ouverte. */
   useMCPRefresh({
-    enabled: isPopoverActive && view === 'mcp' && selectableServers.length > 0,
+    enabled: isOpen && view === 'mcp' && selectableServers.length > 0,
   });
 
-  /** Quand le menu se ferme, on revient toujours à la liste principale. */
+  /** Quand la feuille se ferme, on revient toujours à la liste principale. */
   useEffect(() => {
-    if (!isPopoverActive) {
+    if (!isOpen) {
       setView('root');
       setIsConnectorsMenuOpen(false);
     }
-  }, [isPopoverActive]);
+  }, [isOpen]);
+
+  /** Escape ferme la feuille. */
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [isOpen]);
 
   const showWebSearchSettings = useMemo(() => {
     const authTypes = webSearchAuthData?.authTypes ?? [];
@@ -231,345 +241,221 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     memory?.debouncedChange({ value: newValue });
   }, [memory]);
 
-  /** Trois raccourcis en haut du menu, comme dans l'application Claude. */
+  /** Trois raccourcis en haut de la feuille, comme dans l'application Claude. */
   const attachTiles = [
     { id: 'camera', label: 'Appareil photo', Icon: Camera },
     { id: 'photos', label: 'Photos', Icon: ImageIcon },
     { id: 'files', label: 'Fichiers', Icon: FileUp },
   ];
 
-  const rootItems: MenuItemProps[] = [];
-
-  rootItems.push({
-    hideOnClick: false,
-    render: (props) => (
-      <div {...props} data-testid="tools-menu-attach" className="grid grid-cols-3 gap-2 p-1">
-        {attachTiles.map(({ id, label, Icon }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsPopoverActive(false);
-              openExistingAttachMenu();
-            }}
-            className="flex flex-col items-center gap-2 rounded-xl bg-surface-secondary p-3 text-text-primary hover:bg-surface-hover"
-          >
-            <span className="flex size-10 items-center justify-center rounded-full bg-surface-tertiary">
-              <Icon className="size-5" aria-hidden="true" />
-            </span>
-            <span className="text-xs">{label}</span>
-          </button>
-        ))}
-      </div>
-    ),
-  });
+  /** Lignes de la liste principale. */
+  const rootRows: React.ReactNode[] = [];
 
   if (canUseWebSearch && webSearchEnabled) {
-    rootItems.push({
-      hideOnClick: false,
-      render: (props) => (
-        <div {...props} data-testid="tools-menu-web-search" className="w-full">
-          <div className="flex w-full items-center gap-3 py-1">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleWebSearchToggle();
-              }}
-              className="flex flex-1 items-center gap-3 text-left"
-            >
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-surface-tertiary">
-                <Globe className="size-5" aria-hidden="true" />
-              </span>
-              <span className="flex-1 text-sm text-text-primary">
-                {localize('com_ui_web_search')}
-              </span>
-            </button>
-            {showWebSearchSettings && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsSearchDialogOpen?.(true);
-                }}
-                className="rounded-full p-2 text-text-secondary hover:bg-surface-hover"
-                aria-label="Configure web search"
-                ref={searchMenuTriggerRef}
-              >
-                <Settings className="size-4" aria-hidden="true" />
-              </button>
-            )}
-            <button
-              type="button"
-              role="switch"
-              aria-checked={!!webSearch?.toggleState}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleWebSearchToggle();
-              }}
-              aria-label={localize('com_ui_web_search')}
-            >
-              <ToggleSwitch checked={!!webSearch?.toggleState} />
-            </button>
-          </div>
-        </div>
-      ),
-    });
+    rootRows.push(
+      <div key="web-search" data-testid="tools-menu-web-search" className="flex w-full items-center gap-2">
+        <button
+          type="button"
+          onClick={handleWebSearchToggle}
+          className="flex flex-1 items-center gap-3 text-left"
+        >
+          <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-surface-tertiary">
+            <Globe className="size-5" aria-hidden="true" />
+          </span>
+          <span className="flex-1 text-base text-text-primary">{localize('com_ui_web_search')}</span>
+        </button>
+        {showWebSearchSettings && (
+          <button
+            type="button"
+            onClick={() => setIsSearchDialogOpen?.(true)}
+            className="rounded-full p-2 text-text-secondary hover:bg-surface-hover"
+            aria-label="Configure web search"
+            ref={searchMenuTriggerRef}
+          >
+            <Settings className="size-4" aria-hidden="true" />
+          </button>
+        )}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={!!webSearch?.toggleState}
+          onClick={handleWebSearchToggle}
+          aria-label={localize('com_ui_web_search')}
+        >
+          <ToggleSwitch checked={!!webSearch?.toggleState} />
+        </button>
+      </div>,
+    );
   }
 
   if (fileSearchEnabled && canUseFileSearch) {
-    rootItems.push({
-      hideOnClick: false,
-      render: (props) => (
-        <div {...props} data-testid="tools-menu-file-search" className="w-full">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={!!fileSearch?.toggleState}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleFileSearchToggle();
-            }}
-            className="flex w-full items-center gap-3 py-1 text-left"
-          >
-            <ToolRow
-              Icon={VectorIcon}
-              label={localize('com_assistants_file_search')}
-              right={<ToggleSwitch checked={!!fileSearch?.toggleState} />}
-            />
-          </button>
-        </div>
-      ),
-    });
+    rootRows.push(
+      <button
+        key="file-search"
+        type="button"
+        role="switch"
+        aria-checked={!!fileSearch?.toggleState}
+        data-testid="tools-menu-file-search"
+        onClick={handleFileSearchToggle}
+        className="flex w-full items-center gap-3 text-left"
+      >
+        <ToolRow
+          Icon={VectorIcon}
+          label={localize('com_assistants_file_search')}
+          right={<ToggleSwitch checked={!!fileSearch?.toggleState} />}
+        />
+      </button>,
+    );
   }
 
   if (canUseSkills && skillsEnabled) {
-    rootItems.push({
-      hideOnClick: false,
-      render: (props) => (
-        <div {...props} data-testid="tools-menu-skills" className="w-full">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={!!skills?.toggleState}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleSkillsToggle();
-            }}
-            className="flex w-full items-center gap-3 py-1 text-left"
-          >
-            <ToolRow
-              Icon={ScrollText}
-              label={localize('com_ui_skills')}
-              right={<ToggleSwitch checked={!!skills?.toggleState} />}
-            />
-          </button>
-        </div>
-      ),
-    });
+    rootRows.push(
+      <button
+        key="skills"
+        type="button"
+        role="switch"
+        aria-checked={!!skills?.toggleState}
+        data-testid="tools-menu-skills"
+        onClick={handleSkillsToggle}
+        className="flex w-full items-center gap-3 text-left"
+      >
+        <ToolRow
+          Icon={ScrollText}
+          label={localize('com_ui_skills')}
+          right={<ToggleSwitch checked={!!skills?.toggleState} />}
+        />
+      </button>,
+    );
   }
 
   if (showMemory) {
-    rootItems.push({
-      hideOnClick: false,
-      render: (props) => (
-        <div {...props} data-testid="tools-menu-memory" className="w-full">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={!!memory?.toggleState}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleMemoryToggle();
-            }}
-            className="flex w-full items-center gap-3 py-1 text-left"
-          >
-            <ToolRow
-              Icon={Brain}
-              label={localize('com_ui_memory')}
-              right={<ToggleSwitch checked={!!memory?.toggleState} />}
-            />
-          </button>
-        </div>
-      ),
-    });
+    rootRows.push(
+      <button
+        key="memory"
+        type="button"
+        role="switch"
+        aria-checked={!!memory?.toggleState}
+        data-testid="tools-menu-memory"
+        onClick={handleMemoryToggle}
+        className="flex w-full items-center gap-3 text-left"
+      >
+        <ToolRow
+          Icon={Brain}
+          label={localize('com_ui_memory')}
+          right={<ToggleSwitch checked={!!memory?.toggleState} />}
+        />
+      </button>,
+    );
   }
 
   if (canRunCode && codeEnabled) {
-    rootItems.push({
-      hideOnClick: false,
-      render: (props) => (
-        <div {...props} data-testid="tools-menu-run-code" className="w-full">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={!!codeInterpreter?.toggleState}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleCodeInterpreterToggle();
-            }}
-            className="flex w-full items-center gap-3 py-1 text-left"
-          >
-            <ToolRow
-              Icon={TerminalSquareIcon}
-              label={localize('com_ui_run_code')}
-              right={<ToggleSwitch checked={!!codeInterpreter?.toggleState} />}
-            />
-          </button>
-        </div>
-      ),
-    });
+    rootRows.push(
+      <button
+        key="run-code"
+        type="button"
+        role="switch"
+        aria-checked={!!codeInterpreter?.toggleState}
+        data-testid="tools-menu-run-code"
+        onClick={handleCodeInterpreterToggle}
+        className="flex w-full items-center gap-3 text-left"
+      >
+        <ToolRow
+          Icon={TerminalSquareIcon}
+          label={localize('com_ui_run_code')}
+          right={<ToggleSwitch checked={!!codeInterpreter?.toggleState} />}
+        />
+      </button>,
+    );
   }
 
-  /** Artefacts et Connecteurs ouvrent leur panneau dans le même menu. */
   if (artifactsEnabled && artifacts) {
-    rootItems.push({
-      hideOnClick: false,
-      render: (props) => (
-        <div {...props} data-testid="tools-menu-artifacts" className="w-full">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setView('artifacts');
-            }}
-            className="flex w-full items-center gap-3 py-1 text-left"
-          >
-            <ToolRow
-              Icon={WandSparkles}
-              label="Artefacts"
-              right={<ChevronRight className="size-4" aria-hidden="true" />}
-            />
-          </button>
-        </div>
-      ),
-    });
+    rootRows.push(
+      <button
+        key="artifacts"
+        type="button"
+        data-testid="tools-menu-artifacts"
+        onClick={() => setView('artifacts')}
+        className="flex w-full items-center gap-3 text-left"
+      >
+        <ToolRow
+          Icon={WandSparkles}
+          label="Artefacts"
+          right={<ChevronRight className="size-5 text-text-secondary" aria-hidden="true" />}
+        />
+      </button>,
+    );
   }
 
   if (canUseMcp && mcpServerManager) {
-    rootItems.push({
-      hideOnClick: false,
-      render: (props) => (
-        <div {...props} data-testid="tools-menu-mcp" className="w-full">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setView('mcp');
-            }}
-            className="flex w-full items-center gap-3 py-1 text-left"
-          >
-            <ToolRow
-              Icon={Blocks}
-              label="Connecteurs"
-              right={<ChevronRight className="size-4" aria-hidden="true" />}
-            />
-          </button>
-        </div>
-      ),
-    });
+    rootRows.push(
+      <button
+        key="connectors"
+        type="button"
+        data-testid="tools-menu-mcp"
+        onClick={() => setView('mcp')}
+        className="flex w-full items-center gap-3 text-left"
+      >
+        <ToolRow
+          Icon={Blocks}
+          label="Connecteurs"
+          right={<ChevronRight className="size-5 text-text-secondary" aria-hidden="true" />}
+        />
+      </button>,
+    );
   }
 
   /** Panneau Artefacts : remplace la liste, avec une flèche retour. */
   const artifactsPanel = (
-    <div className="w-72">
-      <div className="flex items-center gap-2 px-1 pb-2">
-        <button
-          type="button"
-          onClick={() => setView('root')}
-          aria-label="Retour"
-          className="rounded p-1 hover:bg-surface-hover"
-        >
-          <ChevronLeft className="size-5" aria-hidden="true" />
-        </button>
-        <span className="font-medium">Artefacts</span>
-      </div>
+    <div className="flex flex-col gap-1">
       <button
         type="button"
         role="switch"
         aria-checked={!!artifacts?.toggleState}
-        onClick={(e) => {
-          e.stopPropagation();
-          handleArtifactsToggle();
-        }}
-        className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-surface-hover"
+        onClick={handleArtifactsToggle}
+        className="flex w-full items-center justify-between rounded-lg px-2 py-3 text-base hover:bg-surface-hover"
       >
         <span>Activer les artefacts</span>
         <ToggleSwitch checked={!!artifacts?.toggleState} />
       </button>
       <button
         type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          handleShadcnToggle();
-        }}
-        className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-surface-hover"
+        onClick={handleShadcnToggle}
+        className="flex w-full items-center justify-between rounded-lg px-2 py-3 text-base hover:bg-surface-hover"
       >
         <span>Inclure shadcn/ui</span>
         {artifacts?.toggleState === ArtifactModes.SHADCNUI && (
-          <Check className="size-4" aria-hidden="true" />
+          <Check className="size-5" aria-hidden="true" />
         )}
       </button>
       <button
         type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          handleCustomToggle();
-        }}
-        className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm hover:bg-surface-hover"
+        onClick={handleCustomToggle}
+        className="flex w-full items-center justify-between rounded-lg px-2 py-3 text-base hover:bg-surface-hover"
       >
         <span>Mode prompt personnalisé</span>
         {artifacts?.toggleState === ArtifactModes.CUSTOM && (
-          <Check className="size-4" aria-hidden="true" />
+          <Check className="size-5" aria-hidden="true" />
         )}
       </button>
     </div>
   );
 
-  /** Panneau Connecteurs : même mise en page que Claude. */
+  /** Panneau Connecteurs : liste, ajout, et configuration. */
   const mcpConfigDialogProps = mcpServerManager?.getConfigDialogProps?.();
   const mcpPanel = mcpServerManager ? (
-    <div className="relative w-72">
-      <div className="flex items-center gap-2 px-1 pb-2">
-        <button
-          type="button"
-          onClick={() => setView('root')}
-          aria-label="Retour"
-          className="rounded p-1 hover:bg-surface-hover"
-        >
-          <ChevronLeft className="size-5" aria-hidden="true" />
-        </button>
-        <span className="flex-1 text-center font-medium">Connecteurs</span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setIsConnectorsMenuOpen((open) => !open);
-          }}
-          aria-label="Ajouter un connecteur"
-          className="rounded p-1 hover:bg-surface-hover"
-        >
-          <Plus className="size-5" aria-hidden="true" />
-        </button>
-      </div>
-
+    <div className="relative flex flex-col gap-1">
       {isConnectorsMenuOpen && (
-        <div className="absolute right-0 top-10 z-50 flex w-64 flex-col rounded-xl border border-border-light bg-surface-secondary p-1 shadow-lg">
+        <div className="absolute right-0 top-0 z-10 flex w-72 flex-col rounded-xl border border-border-light bg-surface-secondary p-1 shadow-lg">
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsConnectorsMenuOpen(false);
-            }}
+            onClick={() => setIsConnectorsMenuOpen(false)}
             className="rounded-lg px-3 py-2 text-left text-sm hover:bg-surface-hover"
           >
             Parcourir les connecteurs
           </button>
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
+            onClick={() => {
               setIsConnectorsMenuOpen(false);
               setIsAddCustomOpen(true);
             }}
@@ -580,28 +466,23 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
         </div>
       )}
 
-      <div className="flex max-h-[360px] flex-col gap-1 overflow-y-auto">
-        {selectableServers.map((server) => {
-          const checked = mcpServerManager.mcpValues?.includes(server.serverName) ?? false;
-          return (
-            <button
-              key={server.serverName}
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                mcpServerManager.toggleServerSelection(server.serverName);
-              }}
-              className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-surface-hover"
-            >
-              <ToolRow
-                Icon={MCPIcon}
-                label={server.serverName}
-                right={<ToggleSwitch checked={checked} />}
-              />
-            </button>
-          );
-        })}
-      </div>
+      {selectableServers.map((server) => {
+        const checked = mcpServerManager.mcpValues?.includes(server.serverName) ?? false;
+        return (
+          <button
+            key={server.serverName}
+            type="button"
+            onClick={() => mcpServerManager.toggleServerSelection(server.serverName)}
+            className="flex w-full items-center gap-3 rounded-lg text-left hover:bg-surface-hover"
+          >
+            <ToolRow
+              Icon={MCPIcon}
+              label={server.serverName}
+              right={<ToggleSwitch checked={checked} />}
+            />
+          </button>
+        );
+      })}
 
       {mcpConfigDialogProps && (
         <MCPConfigDialog {...mcpConfigDialogProps} storageContextKey={storageContextKey} />
@@ -610,39 +491,23 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     </div>
   ) : null;
 
-  /** Dans un panneau, le menu n'affiche que ce panneau. */
-  const dropdownItems: MenuItemProps[] =
-    view === 'root'
-      ? rootItems
-      : [
-          {
-            hideOnClick: false,
-            render: (props) => (
-              <div {...props}>{view === 'artifacts' ? artifactsPanel : mcpPanel}</div>
-            ),
-          },
-        ];
-
-  if (dropdownItems.length === 0) {
-    return null;
-  }
-
   const menuTrigger = (
     <TooltipAnchor
       render={
-        <Ariakit.MenuButton
+        <button
+          type="button"
           disabled={isDisabled}
           id="tools-dropdown-button"
           aria-label="Ajouter à la conversation"
+          aria-expanded={isOpen}
+          onClick={() => setIsOpen((open) => !open)}
           className={cn(
             'flex size-theme-control items-center justify-center rounded-theme-control-round p-1 transition-colors duration-theme-fast hover:bg-surface-composer-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-primary focus-visible:ring-opacity-50',
-            isPopoverActive && 'bg-surface-composer-hover',
+            isOpen && 'bg-surface-composer-hover',
           )}
         >
-          <div className="flex w-full items-center justify-center gap-2">
-            <Plus className="size-5" aria-hidden="true" />
-          </div>
-        </Ariakit.MenuButton>
+          <Plus className="size-5" aria-hidden="true" />
+        </button>
       }
       id="tools-dropdown-button"
       description={localize('com_ui_tools')}
@@ -650,21 +515,104 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     />
   );
 
+  const title =
+    view === 'artifacts' ? 'Artefacts' : view === 'mcp' ? 'Connecteurs' : 'Ajouter à la conversation';
+
   return (
-    <DropdownPopup
-      itemClassName="flex w-full cursor-pointer rounded-lg items-center justify-between hover:bg-surface-hover gap-5"
-      menuId="tools-dropdown-menu"
-      isOpen={isPopoverActive}
-      setIsOpen={setIsPopoverActive}
-      modal={false}
-      portal={true}
-      portalElement={getMainLandmark}
-      preserveTabOrder={false}
-      unmountOnHide={true}
-      trigger={menuTrigger}
-      items={dropdownItems}
-      iconClassName="mr-0"
-    />
+    <>
+      {menuTrigger}
+      {isOpen &&
+        createPortal(
+          <div className="fixed inset-0 z-[100]">
+            <div
+              className="absolute inset-0 bg-black/40"
+              onClick={() => setIsOpen(false)}
+              aria-hidden="true"
+            />
+            <div
+              role="dialog"
+              aria-label={title}
+              data-testid="tools-sheet"
+              className="absolute inset-x-0 bottom-0 flex h-[92dvh] flex-col overflow-hidden rounded-t-3xl bg-surface-primary shadow-2xl"
+              style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+            >
+              <div className="flex justify-center pb-1 pt-3">
+                <span className="h-1 w-10 rounded-full bg-surface-tertiary" aria-hidden="true" />
+              </div>
+
+              <div className="flex items-center justify-between px-4 pb-3 pt-2">
+                {view === 'root' ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsOpen(false)}
+                    aria-label="Fermer"
+                    className="rounded-full p-2 hover:bg-surface-hover"
+                  >
+                    <X className="size-5" aria-hidden="true" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setView('root')}
+                    aria-label="Retour"
+                    className="rounded-full p-2 hover:bg-surface-hover"
+                  >
+                    <ChevronLeft className="size-5" aria-hidden="true" />
+                  </button>
+                )}
+                <span className="text-base font-semibold text-text-primary">{title}</span>
+                {view === 'mcp' ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsConnectorsMenuOpen((open) => !open)}
+                    aria-label="Ajouter un connecteur"
+                    className="rounded-full p-2 hover:bg-surface-hover"
+                  >
+                    <Plus className="size-5" aria-hidden="true" />
+                  </button>
+                ) : (
+                  <span className="size-9" aria-hidden="true" />
+                )}
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-4 pb-6">
+                {view === 'root' && (
+                  <>
+                    <div data-testid="tools-menu-attach" className="grid grid-cols-3 gap-2 pb-4">
+                      {attachTiles.map(({ id, label, Icon }) => (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => {
+                            setIsOpen(false);
+                            openExistingAttachMenu();
+                          }}
+                          className="flex flex-col items-center gap-3 rounded-2xl bg-surface-secondary px-2 py-5 text-text-primary hover:bg-surface-hover"
+                        >
+                          <span className="flex size-12 items-center justify-center rounded-full bg-surface-tertiary">
+                            <Icon className="size-5" aria-hidden="true" />
+                          </span>
+                          <span className="text-sm">{label}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex flex-col gap-1 rounded-2xl bg-surface-secondary px-3 py-1">
+                      {rootRows.map((row, i) => (
+                        <div key={i} className={cn(i > 0 && 'border-t border-border-light')}>
+                          {row}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {view === 'artifacts' && artifactsPanel}
+                {view === 'mcp' && mcpPanel}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 };
 
