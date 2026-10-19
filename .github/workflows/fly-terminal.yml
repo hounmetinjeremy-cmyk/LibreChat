@@ -1,0 +1,35 @@
+name: Déployer le terminal Fly
+
+on:
+  push:
+    branches: [fly-terminal, main]
+    paths:
+      - 'fly-terminal/**'
+      - '.github/workflows/fly-terminal.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Créer l'application si elle n'existe pas
+        working-directory: fly-terminal
+        run: flyctl apps create jh-terminal || true
+
+      - name: Définir les identifiants du terminal
+        working-directory: fly-terminal
+        run: |
+          flyctl secrets set \
+            TERMINAL_USER="${{ secrets.TERMINAL_USER }}" \
+            TERMINAL_PASSWORD="${{ secrets.TERMINAL_PASSWORD }}" \
+            --app jh-terminal --stage
+
+      - name: Déployer
+        working-directory: fly-terminal
+        run: flyctl deploy --remote-only --app jh-terminal
