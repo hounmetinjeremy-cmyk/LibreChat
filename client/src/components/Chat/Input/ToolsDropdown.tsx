@@ -28,8 +28,6 @@ import {
 import {
   useLocalize,
   useHasAccess,
-  useAuthContext,
-  useHasMemoryAccess,
   useAgentCapabilities,
 } from '~/hooks';
 import { useMCPRefresh } from '~/hooks/MCP/useMCPRefresh';
@@ -91,7 +89,6 @@ const ToolRow = ({
 
 const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const localize = useLocalize();
-  const { user } = useAuthContext();
   const context = useBadgeRowContext();
 
   const {
@@ -126,10 +123,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     permissionType: PermissionTypes.SKILLS,
     permission: Permissions.USE,
   });
-
-  /** Mémoire : toujours visible dans le menu « + » dès que l'utilisateur y a accès. */
-  const canUseMemory = useHasMemoryAccess();
-  const showMemory = canUseMemory;
 
   const [isOpen, setIsOpen] = useState(false);
   const [view, setView] = useState<MenuView>('root');
@@ -338,25 +331,24 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     );
   }
 
-  if (showMemory) {
-    rootRows.push(
-      <button
-        key="memory"
-        type="button"
-        role="switch"
-        aria-checked={!!memory?.toggleState}
-        data-testid="tools-menu-memory"
-        onClick={handleMemoryToggle}
-        className="flex w-full items-center gap-3 text-left"
-      >
-        <ToolRow
-          Icon={Brain}
-          label={localize('com_ui_memory')}
-          right={<ToggleSwitch checked={!!memory?.toggleState} />}
-        />
-      </button>,
-    );
-  }
+  /** Mémoire : toujours affichée, avec un interrupteur. */
+  rootRows.push(
+    <button
+      key="memory"
+      type="button"
+      role="switch"
+      aria-checked={!!memory?.toggleState}
+      data-testid="tools-menu-memory"
+      onClick={handleMemoryToggle}
+      className="flex w-full items-center gap-3 text-left"
+    >
+      <ToolRow
+        Icon={Brain}
+        label={localize('com_ui_memory')}
+        right={<ToggleSwitch checked={!!memory?.toggleState} />}
+      />
+    </button>,
+  );
 
   if (artifactsEnabled && artifacts) {
     rootRows.push(
