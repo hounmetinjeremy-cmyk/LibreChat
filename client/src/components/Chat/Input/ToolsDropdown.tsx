@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { TooltipAnchor, VectorIcon, MCPIcon } from '@librechat/client';
 import {
@@ -14,7 +14,6 @@ import {
   Plus,
   ScrollText,
   Settings,
-  TerminalSquareIcon,
   WandSparkles,
   X,
 } from 'lucide-react';
@@ -29,8 +28,6 @@ import {
 import {
   useLocalize,
   useHasAccess,
-  useAuthContext,
-  useHasMemoryAccess,
   useAgentCapabilities,
 } from '~/hooks';
 import { useMCPRefresh } from '~/hooks/MCP/useMCPRefresh';
@@ -92,12 +89,10 @@ const ToolRow = ({
 
 const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const localize = useLocalize();
-  const { user } = useAuthContext();
   const context = useBadgeRowContext();
 
   const {
     codeEnabled,
-    memoryEnabled,
     webSearchEnabled,
     artifactsEnabled,
     fileSearchEnabled,
@@ -129,9 +124,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     permission: Permissions.USE,
   });
 
-  const canUseMemory = useHasMemoryAccess();
-  const showMemory = canUseMemory && memoryEnabled && user?.personalization?.memories !== false;
-
   const [isOpen, setIsOpen] = useState(false);
   const [view, setView] = useState<MenuView>('root');
   const [isAddCustomOpen, setIsAddCustomOpen] = useState(false);
@@ -155,6 +147,22 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const { authData: webSearchAuthData } = webSearch ?? {};
 
   const selectableServers = mcpServerManager?.selectableServers ?? [];
+
+  /** Exécution de code : activée automatiquement, comme dans Claude, sans ligne dans le menu.
+   *  Une seule fois par montage, pour ne pas boucler si la valeur ne se met pas à jour tout de suite. */
+  const autoEnabledRef = useRef(false);
+  useEffect(() => {
+    if (autoEnabledRef.current) {
+      return;
+    }
+    if (!canRunCode || !codeEnabled || !codeInterpreter) {
+      return;
+    }
+    autoEnabledRef.current = true;
+    if (!codeInterpreter.toggleState) {
+      codeInterpreter.debouncedChange({ value: true });
+    }
+  }, [canRunCode, codeEnabled, codeInterpreter]);
 
   /** Rafraîchit la liste des connecteurs tant que la feuille est ouverte. */
   useMCPRefresh({
@@ -193,11 +201,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     const newValue = !webSearch?.toggleState;
     webSearch?.debouncedChange({ value: newValue });
   }, [webSearch]);
-
-  const handleCodeInterpreterToggle = useCallback(() => {
-    const newValue = !codeInterpreter?.toggleState;
-    codeInterpreter?.debouncedChange({ value: newValue });
-  }, [codeInterpreter]);
 
   const handleFileSearchToggle = useCallback(() => {
     const newValue = !fileSearch?.toggleState;
@@ -328,45 +331,24 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     );
   }
 
-  if (showMemory) {
-    rootRows.push(
-      <button
-        key="memory"
-        type="button"
-        role="switch"
-        aria-checked={!!memory?.toggleState}
-        data-testid="tools-menu-memory"
-        onClick={handleMemoryToggle}
-        className="flex w-full items-center gap-3 text-left"
-      >
-        <ToolRow
-          Icon={Brain}
-          label={localize('com_ui_memory')}
-          right={<ToggleSwitch checked={!!memory?.toggleState} />}
-        />
-      </button>,
-    );
-  }
-
-  if (canRunCode && codeEnabled) {
-    rootRows.push(
-      <button
-        key="run-code"
-        type="button"
-        role="switch"
-        aria-checked={!!codeInterpreter?.toggleState}
-        data-testid="tools-menu-run-code"
-        onClick={handleCodeInterpreterToggle}
-        className="flex w-full items-center gap-3 text-left"
-      >
-        <ToolRow
-          Icon={TerminalSquareIcon}
-          label={localize('com_ui_run_code')}
-          right={<ToggleSwitch checked={!!codeInterpreter?.toggleState} />}
-        />
-      </button>,
-    );
-  }
+  /** Mémoire : toujours affichée, avec un interrupteur. */
+  rootRows.push(
+    <button
+      key="memory"
+      type="button"
+      role="switch"
+      aria-checked={!!memory?.toggleState}
+      data-testid="tools-menu-memory"
+      onClick={handleMemoryToggle}
+      className="flex w-full items-center gap-3 text-left"
+    >
+      <ToolRow
+        Icon={Brain}
+        label={localize('com_ui_memory')}
+        right={<ToggleSwitch checked={!!memory?.toggleState} />}
+      />
+    </button>,
+  );
 
   if (artifactsEnabled && artifacts) {
     rootRows.push(
