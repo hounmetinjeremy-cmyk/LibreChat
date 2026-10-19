@@ -14,6 +14,7 @@ import {
   Permissions,
   EModelEndpoint,
   PermissionTypes,
+  SystemRoles,
   isParamEndpoint,
   isAgentsEndpoint,
   isAssistantsEndpoint,
@@ -25,6 +26,7 @@ import {
   useMCPServerManager,
   useGetAgentsConfig,
   useHasAccess,
+  useAuthContext,
 } from '~/hooks';
 import MCPBuilderPanel from '~/components/SidePanel/MCPBuilder/MCPBuilderPanel';
 import AgentPanelSwitch from '~/components/SidePanel/Agents/AgentPanelSwitch';
@@ -36,6 +38,17 @@ import { MemoryPanel } from '~/components/SidePanel/Memories';
 import FilesPanel from '~/components/SidePanel/Files/Panel';
 import { PromptsAccordion } from '~/components/Prompts';
 import { SkillsAccordion } from '~/components/Skills';
+
+/** Entrées d'administration : visibles uniquement pour le rôle ADMIN. */
+const ADMIN_ONLY_IDS = [
+  EModelEndpoint.agents,
+  'skills',
+  'schedules',
+  'prompts',
+  'memories',
+  'parameters',
+  'mcp-builder',
+];
 
 export default function useSideNavLinks({
   hidePanel,
@@ -54,6 +67,9 @@ export default function useSideNavLinks({
   endpointsConfig: TEndpointsConfig;
   includeHidePanel?: boolean;
 }) {
+  const { user } = useAuthContext();
+  const isAdminUser = user?.role === SystemRoles.ADMIN;
+
   const hasAccessToPrompts = useHasAccess({
     permissionType: PermissionTypes.PROMPTS,
     permission: Permissions.USE,
@@ -242,7 +258,10 @@ export default function useSideNavLinks({
       });
     }
 
-    return links;
+    if (isAdminUser) {
+      return links;
+    }
+    return links.filter((link) => !ADMIN_ONLY_IDS.includes(link.id));
   }, [
     endpoint,
     endpointsConfig,
@@ -264,6 +283,7 @@ export default function useSideNavLinks({
     hasAccessToCreateMCP,
     includeHidePanel,
     hidePanel,
+    isAdminUser,
   ]);
 
   return Links;
