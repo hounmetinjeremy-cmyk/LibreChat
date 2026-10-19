@@ -15,8 +15,6 @@ import type { BadgeItem } from '~/common';
 import CodeInterpreter from './CodeInterpreter';
 import { BadgeRowProvider } from '~/Providers';
 import ToolsDropdown from './ToolsDropdown';
-import ModelSelector from './Menus/Endpoints/ModelSelector';
-import { useGetStartupConfig } from '~/data-provider';
 import { useChatBadges } from '~/hooks';
 import ToolDialogs from './ToolDialogs';
 import FileSearch from './FileSearch';
@@ -167,7 +165,6 @@ function BadgeRow({
   const animationFrame = useRef<number | null>(null);
   const containerRectRef = useRef<DOMRect | null>(null);
 
-  const { data: startupConfig } = useGetStartupConfig();
   const allBadges = useChatBadges();
   const isEditing = useRecoilValue(store.isEditingBadges);
 
@@ -335,7 +332,6 @@ function BadgeRow({
     >
       <div ref={containerRef} className="relative flex flex-wrap items-center gap-2">
         {showEphemeralBadges === true && <ToolsDropdown />}
-        {showEphemeralBadges === true && <ModelSelector startupConfig={startupConfig} />}
         {tempBadges.map((badge, index) => (
           <React.Fragment key={badge.id}>
             {dragState.draggedBadge && dragState.insertIndex === index && ghostBadge && (
@@ -376,7 +372,7 @@ function BadgeRow({
           </div>
         )}
         {showEphemeralBadges === true && (
-          <>
+          <div className="hidden">
             <WebSearch />
             <CodeInterpreter />
             <FileSearch />
@@ -384,7 +380,7 @@ function BadgeRow({
             <Memory />
             <Artifacts />
             <MCPSelect />
-          </>
+          </div>
         )}
         {ghostBadge && (
           <div
