@@ -838,10 +838,10 @@ const ChatForm = memo(function ChatForm({
               )}
               <div
                 className={cn(
-                  '@container flex flex-wrap items-center gap-2 px-2 pb-2',
+                  '@container flex flex-nowrap items-center gap-2 px-2 pb-2',
                   isRTL ? 'flex-row-reverse' : 'flex-row',
                 )}
-              >m
+              >
                 <div className="sr-only">
                   <AttachFileChat
                     conversation={conversation}
@@ -866,15 +866,17 @@ const ChatForm = memo(function ChatForm({
                     Array.isArray(conversation?.messages) && conversation.messages.length >= 1
                   }
                 />
-                <CodeApprovalMenu
-                  conversation={conversation}
-                  addedConversation={addedConvo}
-                  setConversation={setConversation}
-                  disabled={disableInputs}
-                />
-                {index === 0 && conversationId != null && (
-                  <PendingToolApprovalButton conversationId={conversationId} />
-                )}
+                <div className="hidden sm:contents">
+                  <CodeApprovalMenu
+                    conversation={conversation}
+                    addedConversation={addedConvo}
+                    setConversation={setConversation}
+                    disabled={disableInputs}
+                  />
+                  {index === 0 && conversationId != null && (
+                    <PendingToolApprovalButton conversationId={conversationId} />
+                  )}
+                </div>
                 <div className="grow" />
                 <TokenUsage index={index} conversation={conversation} isSubmitting={isSubmitting} />
                 {SpeechToText && (
