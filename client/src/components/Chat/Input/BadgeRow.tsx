@@ -15,7 +15,7 @@ import type { BadgeItem } from '~/common';
 import CodeInterpreter from './CodeInterpreter';
 import { BadgeRowProvider } from '~/Providers';
 import ToolsDropdown from './ToolsDropdown';
-import ModelSelector from './Menus/Endpoints/ModelSelector';
+import ModelSelector from '../Menus/Endpoints/ModelSelector';
 import { useGetStartupConfig } from '~/data-provider';
 import { useChatBadges } from '~/hooks';
 import ToolDialogs from './ToolDialogs';
@@ -376,7 +376,7 @@ function BadgeRow({
           </div>
         )}
         {showEphemeralBadges === true && (
-          <>
+          <div className="hidden">
             <WebSearch />
             <CodeInterpreter />
             <FileSearch />
@@ -384,7 +384,7 @@ function BadgeRow({
             <Memory />
             <Artifacts />
             <MCPSelect />
-          </>
+          </div>
         )}
         {ghostBadge && (
           <div
