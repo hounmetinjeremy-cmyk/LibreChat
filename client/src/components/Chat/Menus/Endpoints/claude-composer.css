@@ -1,0 +1,26 @@
+/* Rangée d'actions du champ de saisie, à la manière de Claude :
+   boutons ronds gris (+ et micro), pastille de modèle, bouton d'envoi rond. */
+
+#tools-dropdown-button,
+#audio-recorder {
+  width: 2.5rem;
+  height: 2.5rem;
+  min-width: 2.5rem;
+  padding: 0;
+  border-radius: 9999px;
+  background-color: var(--surface-tertiary, #ececec);
+  transition: background-color 150ms ease;
+}
+
+#tools-dropdown-button:hover:not(:disabled),
+#audio-recorder:hover:not(:disabled) {
+  background-color: var(--surface-hover, #e0e0e0);
+}
+
+#send-button {
+  width: 2.5rem;
+  height: 2.5rem;
+  min-width: 2.5rem;
+  padding: 0;
+  border-radius: 9999px;
+}
