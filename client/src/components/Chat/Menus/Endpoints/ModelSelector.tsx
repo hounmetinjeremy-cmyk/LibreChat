@@ -15,6 +15,7 @@ import { getSelectedIcon, getDisplayValue } from './utils';
 import { CustomMenu as Menu } from './CustomMenu';
 import DialogManager from './DialogManager';
 import { useLocalize } from '~/hooks';
+import './claude-composer.css';
 
 const defaultInterface = getConfigDefaults().interface;
 
@@ -73,7 +74,7 @@ function ModelSelectorContent() {
         <button
           data-testid="model-selector-button"
           aria-keyshortcuts={modelSelectorAriaKey}
-          className="my-1 flex h-9 max-w-full items-center gap-2 rounded-full border-0 bg-surface-tertiary px-4 text-sm font-normal text-text-primary hover:bg-surface-hover"
+          className="flex h-10 max-w-full items-center gap-2 rounded-full border-0 bg-surface-tertiary px-4 text-sm font-normal text-text-primary hover:bg-surface-hover"
           aria-label={localize('com_ui_select_model')}
         >
           {selectedIcon && React.isValidElement(selectedIcon) && (
