@@ -24,3 +24,13 @@
   padding: 0;
   border-radius: 9999px;
 }
+
+/* Cadre du champ de saisie sur téléphone : détaché des bords de l'écran,
+   coins arrondis partout, comme la zone de saisie de Claude. */
+@media (max-width: 639px) {
+  [data-testid='composer-surface'] {
+    width: auto !important;
+    margin: 0 0.9rem calc(0.9rem + env(safe-area-inset-bottom, 0px)) !important;
+    border-radius: 1.75rem !important;
+  }
+}
