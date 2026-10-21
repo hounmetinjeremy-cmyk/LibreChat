@@ -12,6 +12,8 @@ primary_region = 'ams'
   ALLOW_REGISTRATION = 'true'
   DOMAIN_CLIENT = 'https://librechat-a7cwuq.fly.dev'
   DOMAIN_SERVER = 'https://librechat-a7cwuq.fly.dev'
+  # Active Gemini (Google) : la clé est saisie dans l'interface par chaque utilisateur.
+  GOOGLE_KEY = 'user_provided'
 
 [http_service]
   internal_port = 3080
