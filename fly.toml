@@ -14,6 +14,8 @@ primary_region = 'ams'
   DOMAIN_SERVER = 'https://librechat-a7cwuq.fly.dev'
   # Active Gemini (Google) : la clé est saisie dans l'interface par chaque utilisateur.
   GOOGLE_KEY = 'user_provided'
+  # Liste fixe des modèles Gemini (identifiants officiels de Google AI Studio).
+  GOOGLE_MODELS = 'gemini-3.1-pro-preview,gemini-3-flash-preview,gemini-3.1-flash-lite,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite'
 
 [http_service]
   internal_port = 3080
