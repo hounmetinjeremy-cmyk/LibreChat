@@ -10,6 +10,8 @@ primary_region = 'ams'
 
 [env]
   ALLOW_REGISTRATION = 'true'
+  DOMAIN_CLIENT = 'https://librechat-a7cwuq.fly.dev'
+  DOMAIN_SERVER = 'https://librechat-a7cwuq.fly.dev'
 
 [http_service]
   internal_port = 3080
