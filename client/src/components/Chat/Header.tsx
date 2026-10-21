@@ -92,7 +92,9 @@ function Header({
           <SubagentThreadLink threadId={parentConversationId} labelClassName="hidden lg:inline" />
         )}
         {!readOnly && interfaceConfig.presets === true && interfaceConfig.modelSelect === true && (
-          <PresetsMenu />
+          <div className="hidden md:contents">
+            <PresetsMenu />
+          </div>
         )}
         {hasAccessToBookmarks === true && (
           <div className="hidden items-center md:flex">
