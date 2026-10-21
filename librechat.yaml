@@ -1,7 +1,7 @@
 version: 1.2.1
 endpoints:
   custom:
-    # DeepSeek passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
+    # DeepSeek passée par « vision-bridge » (Worker Cloudflare) : les images et PDF
     # sont d'abord lus par Gemini, puis le texte est transmis à DeepSeek.
     # Clé à saisir dans l'interface : clé_deepseek,clé_gemini (séparées par une virgule).
     - name: "DeepSeek"
@@ -13,6 +13,17 @@ endpoints:
       titleConvo: true
       titleModel: "current_model"
       modelDisplayLabel: "DeepSeek"
+  google:
+    # Google AI Studio (Gemini) — liste forcée de Model IDs officiels.
+    # fetch: false empêche la génération automatique de Model IDs fictifs ou
+    # obsolètes (ex. gemini-3.8-flash, gemini-3-pro-preview) qui cassent le
+    # Function Calling (Tool Use) des agents.
+    apiKey: "user_provided"
+    models:
+      default: ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"]
+      fetch: false
+    titleConvo: true
+    titleModel: "gemini-2.5-flash"
 
 mcpServers:
   cloudflare:
