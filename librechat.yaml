@@ -2,27 +2,7 @@ version: 1.2.1
 endpoints:
   google:
     apiKey: "user_provided"
-  anthropic:
-    apiKey: "user_provided"
   custom:
-    - name: "Groq"
-      apiKey: "user_provided"
-      baseURL: "https://api.groq.com/openai/v1"
-      models:
-        default: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
-        fetch: true
-      titleConvo: true
-      titleModel: "llama-3.1-8b-instant"
-      modelDisplayLabel: "Groq"
-    - name: "Workers AI"
-      apiKey: "${CLOUDFLARE_API_TOKEN}"
-      baseURL: "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1"
-      models:
-        default: ["@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/deepseek-ai/deepseek-v4-flash-0731", "@cf/moonshotai/kimi-k2.7-code", "@cf/moonshotai/kimi-k2.6"]
-        fetch: false
-      titleConvo: true
-      titleModel: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-      modelDisplayLabel: "Cloudflare Workers AI"
     - name: "DeepSeek"
       apiKey: "user_provided"
       baseURL: "https://api.deepseek.com/v1"
@@ -33,13 +13,6 @@ endpoints:
       titleModel: "deepseek-chat"
       modelDisplayLabel: "DeepSeek"
 
-# Liaison directe (sans MCP) : le terminal est exposé comme Action OpenAPI.
-# Le schéma complet est dans terminal-openapi.json (à coller dans
-# Admin > Agents > Actions). Authentification : clé API Bearer = ${TERMINAL_TOKEN}.
-actions:
-  allowedDomains:
-    - 'terminal-mcp-hounmetin.fly.dev'
-
 mcpServers:
   cloudflare:
     type: streamable-http
@@ -49,12 +22,6 @@ mcpServers:
   terminal:
     type: streamable-http
     url: https://terminal-mcp-hounmetin.fly.dev/mcp
-    # Le serveur fly-terminal-mcp utilise uniquement un jeton Bearer.
-    # OAuth doit rester désactivé, sinon l'appel échoue avec
-    # « OAuth authentication required ».
-    # NB : la liaison directe (Action OpenAPI) est aussi disponible,
-    # voir actions.allowedDomains + terminal-openapi.json.
-    requiresOAuth: false
     headers:
       Authorization: "Bearer ${TERMINAL_TOKEN}"
     timeout: 900000
