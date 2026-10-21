@@ -41,7 +41,11 @@ mcpServers:
     timeout: 60000
   terminal:
     type: streamable-http
-    url: https://terminal-mcp-hounmetin.fly.dev/mcp
+    url: https://terminal-mcp-houmetin.fly.dev/mcp
+    # Le serveur fly-terminal-mcp utilise uniquement un jeton Bearer.
+    # OAuth doit rester désactivé, sinon l'appel échoue avec
+    # « OAuth authentication required ».
+    requiresOAuth: false
     headers:
       Authorization: "Bearer ${TERMINAL_TOKEN}"
     timeout: 900000
