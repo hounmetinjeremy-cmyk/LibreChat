@@ -39,3 +39,10 @@ mcpServers:
     url: https://mcp.cloudflare.com/mcp
     requiresOAuth: true
     timeout: 60000
+  terminal:
+    type: streamable-http
+    url: https://terminal-mcp-hounmetin.fly.dev/mcp
+    headers:
+      Authorization: "Bearer ${TERMINAL_TOKEN}"
+    timeout: 900000
+    initTimeout: 60000
