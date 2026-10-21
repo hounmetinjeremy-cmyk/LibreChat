@@ -1,7 +1,5 @@
 version: 1.2.1
 endpoints:
-  google:
-    apiKey: "user_provided"
   custom:
     # DeepSeek passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
     # sont d'abord lus par Gemini, puis le texte est transmis à DeepSeek.
@@ -11,9 +9,9 @@ endpoints:
       baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
       models:
         default: ["deepseek-chat", "deepseek-reasoner"]
-        fetch: false
+        fetch: true
       titleConvo: true
-      titleModel: "deepseek-chat"
+      titleModel: "current_model"
       modelDisplayLabel: "DeepSeek"
 
 mcpServers:
