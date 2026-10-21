@@ -33,6 +33,13 @@ endpoints:
       titleModel: "deepseek-chat"
       modelDisplayLabel: "DeepSeek"
 
+# Liaison directe (sans MCP) : le terminal est exposé comme Action OpenAPI.
+# Le schéma complet est dans terminal-openapi.json (à coller dans
+# Admin > Agents > Actions). Authentification : clé API Bearer = ${TERMINAL_TOKEN}.
+actions:
+  allowedDomains:
+    - 'terminal-mcp-hounmetin.fly.dev'
+
 mcpServers:
   cloudflare:
     type: streamable-http
@@ -41,10 +48,12 @@ mcpServers:
     timeout: 60000
   terminal:
     type: streamable-http
-    url: https://terminal-mcp-houmetin.fly.dev/mcp
+    url: https://terminal-mcp-hounmetin.fly.dev/mcp
     # Le serveur fly-terminal-mcp utilise uniquement un jeton Bearer.
     # OAuth doit rester désactivé, sinon l'appel échoue avec
     # « OAuth authentication required ».
+    # NB : la liaison directe (Action OpenAPI) est aussi disponible,
+    # voir actions.allowedDomains + terminal-openapi.json.
     requiresOAuth: false
     headers:
       Authorization: "Bearer ${TERMINAL_TOKEN}"

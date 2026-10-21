@@ -1,0 +1,516 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Terminal Fly.io (sessions isolées)",
+    "version": "3.0.0",
+    "description": "Terminal Linux complet avec sessions isolées (dossier + tmux par session), tâches de fond et gestion de fichiers. Liaison directe sans MCP : chaque action appelle POST /api/<action> sur https://terminal-mcp-hounmetin.fly.dev."
+  },
+  "servers": [
+    { "url": "https://terminal-mcp-hounmetin.fly.dev" }
+  ],
+  "security": [
+    { "bearerAuth": [] }
+  ],
+  "paths": {
+    "/api/session_create": {
+      "post": {
+        "operationId": "session_create",
+        "summary": "Crée (ou retrouve) une session : dossier dédié /workspace/sessions/<session_id>/ et instance tmux propre.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/session_list": {
+      "post": {
+        "operationId": "session_list",
+        "summary": "Liste les sessions existantes et indique si leur tmux tourne.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": {} }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/session_reset": {
+      "post": {
+        "operationId": "session_reset",
+        "summary": "VIDE totalement l'espace de travail de la session (fichiers, tâches de fond) puis la recrée vide. Les autres sessions ne sont pas touchées.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/session_delete": {
+      "post": {
+        "operationId": "session_delete",
+        "summary": "SUPPRIME la session : arrête son tmux et efface son dossier. Les autres sessions ne sont pas touchées.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/exec": {
+      "post": {
+        "operationId": "exec",
+        "summary": "Exécute une commande shell (bash) dans le dossier de la session et renvoie la sortie. Pour un serveur ou un script long, utilise bg_start.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["command"],
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  },
+                  "command": {
+                    "type": "string",
+                    "description": "Commande shell à exécuter"
+                  },
+                  "cwd": {
+                    "type": "string",
+                    "description": "Sous-dossier de la session où exécuter (défaut : racine de la session)"
+                  },
+                  "timeout_s": {
+                    "type": "integer",
+                    "description": "Délai maximal en secondes (défaut 120, max 900)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/bg_start": {
+      "post": {
+        "operationId": "bg_start",
+        "summary": "Lance une commande en ARRIÈRE-PLAN dans une fenêtre tmux de la session (bot, serveur web, script long). Elle continue de tourner après la réponse. Sa sortie est écrite dans .logs/<name>.log.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "command"],
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Nom de la tâche (lettres, chiffres, - et _)"
+                  },
+                  "command": {
+                    "type": "string",
+                    "description": "Commande shell à lancer en tâche de fond"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/bg_list": {
+      "post": {
+        "operationId": "bg_list",
+        "summary": "Liste les tâches de fond en cours dans la session et les journaux disponibles.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/bg_logs": {
+      "post": {
+        "operationId": "bg_logs",
+        "summary": "Lit les dernières lignes du journal d'une tâche de fond.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Nom de la tâche"
+                  },
+                  "lines": {
+                    "type": "integer",
+                    "description": "Nombre de lignes à renvoyer (défaut 100)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/bg_stop": {
+      "post": {
+        "operationId": "bg_stop",
+        "summary": "Arrête une tâche de fond (ferme sa fenêtre tmux).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Nom de la tâche à arrêter"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/tmux_send": {
+      "post": {
+        "operationId": "tmux_send",
+        "summary": "Envoie du texte (ou une touche) au terminal tmux interactif de la session, puis Entrée par défaut. Utile pour piloter un programme interactif.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["keys"],
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  },
+                  "keys": {
+                    "type": "string",
+                    "description": "Texte à taper"
+                  },
+                  "enter": {
+                    "type": "boolean",
+                    "description": "Appuyer sur Entrée ensuite (défaut true)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/tmux_capture": {
+      "post": {
+        "operationId": "tmux_capture",
+        "summary": "Capture l'écran du terminal tmux interactif de la session (dernières lignes).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  },
+                  "lines": {
+                    "type": "integer",
+                    "description": "Nombre de lignes d'historique à inclure (défaut 200)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/read_file": {
+      "post": {
+        "operationId": "read_file",
+        "summary": "Lit un fichier texte de la session (chemin relatif au dossier de la session).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "Chemin du fichier"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/write_file": {
+      "post": {
+        "operationId": "write_file",
+        "summary": "Écrit un fichier texte dans la session (crée les dossiers manquants, remplace le fichier existant).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["path", "content"],
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "Chemin du fichier"
+                  },
+                  "content": {
+                    "type": "string",
+                    "description": "Contenu complet du fichier"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/str_replace_file": {
+      "post": {
+        "operationId": "str_replace_file",
+        "summary": "Remplace une portion de texte unique dans un fichier de la session (old_str doit apparaître exactement une fois).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["path", "old_str", "new_str"],
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "Chemin du fichier"
+                  },
+                  "old_str": {
+                    "type": "string",
+                    "description": "Texte à remplacer (unique dans le fichier)"
+                  },
+                  "new_str": {
+                    "type": "string",
+                    "description": "Texte de remplacement (peut être vide)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/list_files": {
+      "post": {
+        "operationId": "list_files",
+        "summary": "Liste le contenu d'un dossier de la session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "description": "Identifiant de la session (défaut \"default\"). Chaque session a son propre dossier et son propre tmux."
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "Sous-dossier à lister (défaut : racine de la session)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}
