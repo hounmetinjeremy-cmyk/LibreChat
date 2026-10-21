@@ -34,3 +34,66 @@
     border-radius: 1.75rem !important;
   }
 }
+
+/* Barre du haut sur téléphone, comme Claude : trois traits à gauche,
+   nouvelle conversation (bulle noire avec un +) et trois points verticaux à droite,
+   sans cadre autour des boutons. */
+@media (max-width: 767px) {
+  [data-testid='header-open-sidebar-button'],
+  [data-testid='header-overflow-menu'] {
+    border: 0 !important;
+    box-shadow: none !important;
+    background-color: transparent !important;
+  }
+
+  [data-testid='header-open-sidebar-button'] > svg,
+  [data-testid='header-overflow-menu'] > svg {
+    display: none !important;
+  }
+
+  [data-testid='header-open-sidebar-button']::before,
+  [data-testid='header-overflow-menu']::before {
+    content: '';
+    display: block;
+    width: 1.75rem;
+    height: 1.75rem;
+    background-color: currentColor;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+  }
+
+  /* Trois traits (le deuxième plus court). */
+  [data-testid='header-open-sidebar-button']::before {
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 6h18M3 12h12M3 18h18' stroke='black' stroke-width='2' stroke-linecap='round' fill='none'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 6h18M3 12h12M3 18h18' stroke='black' stroke-width='2' stroke-linecap='round' fill='none'/%3E%3C/svg%3E");
+  }
+
+  /* Trois points verticaux. */
+  [data-testid='header-overflow-menu']::before {
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='5' r='1.9'/%3E%3Ccircle cx='12' cy='12' r='1.9'/%3E%3Ccircle cx='12' cy='19' r='1.9'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='5' r='1.9'/%3E%3Ccircle cx='12' cy='12' r='1.9'/%3E%3Ccircle cx='12' cy='19' r='1.9'/%3E%3C/svg%3E");
+  }
+
+  /* Nouvelle conversation : bulle noire avec un + blanc, sans cadre. */
+  a[data-testid='header-new-chat-button'] {
+    border: 0 !important;
+    box-shadow: none !important;
+    background-color: transparent !important;
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+    background-size: 1.9rem 1.9rem !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3C8.8 3 3 8 3 14.2c0 2.6 1 5 2.8 6.9L4.5 28l6.6-2.9c1.5.5 3.1.7 4.9.7 7.2 0 13-5 13-11.6S23.2 3 16 3z' fill='%23262625'/%3E%3Cpath d='M16 9.5v9M11.5 14h9' stroke='white' stroke-width='2.2' stroke-linecap='round' fill='none'/%3E%3C/svg%3E") !important;
+  }
+
+  .dark a[data-testid='header-new-chat-button'] {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3C8.8 3 3 8 3 14.2c0 2.6 1 5 2.8 6.9L4.5 28l6.6-2.9c1.5.5 3.1.7 4.9.7 7.2 0 13-5 13-11.6S23.2 3 16 3z' fill='%23ececec'/%3E%3Cpath d='M16 9.5v9M11.5 14h9' stroke='%23262625' stroke-width='2.2' stroke-linecap='round' fill='none'/%3E%3C/svg%3E") !important;
+  }
+
+  a[data-testid='header-new-chat-button'] > svg {
+    display: none !important;
+  }
+}
