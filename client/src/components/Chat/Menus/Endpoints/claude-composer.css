@@ -110,7 +110,6 @@
     background-color: #f4f3ee !important;
     border-radius: 0 1.75rem 1.75rem 0;
     box-shadow: 0 0 2.5rem rgba(0, 0, 0, 0.18);
-    overflow: hidden;
   }
 
   .dark #mobile-drawer {
@@ -121,13 +120,15 @@
     background-color: transparent !important;
   }
 
-  /* La liste ne garde que les conversations : plus de « Projects », de titre
-     « Conversations » ni d'intitulés de dates (Aujourd'hui, Hier, ...). */
-  #mobile-drawer [role='region'] > div > div > :first-child:not(:last-child) {
+  /* La liste des conversations est épurée : plus de « Projects », de titre
+     « Conversations » ni d'intitulés de dates. Ces règles ne concernent QUE le
+     panneau des conversations (celui qui contient des lignes de conversation) :
+     les autres panneaux, comme les réglages MCP, restent intacts. */
+  #mobile-drawer [role='region']:has([data-testid='convo-list-row']) > div > div > :first-child:not(:last-child) {
     display: none !important;
   }
 
-  #mobile-drawer [role='region'] > div > div > :last-child > .px-3:first-child {
+  #mobile-drawer [role='region']:has([data-testid='convo-list-row']) > div > div > :last-child > .px-3:first-child {
     display: none !important;
   }
 
