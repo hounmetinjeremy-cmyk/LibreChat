@@ -1,20 +1,23 @@
-import { memo, useCallback } from 'react';
+import { memo, lazy, Suspense, useCallback } from 'react';
 import { useRecoilValue } from 'recoil';
-import { SquarePen } from 'lucide-react';
-import { Button } from '@librechat/client';
+import { Plus } from 'lucide-react';
+import { Button, Skeleton } from '@librechat/client';
 import type { NavLink } from '~/common';
 import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
 import { useShortcutAriaKey } from '~/hooks/useKeyboardShortcuts';
 import SearchBar from '~/components/Nav/SearchBar';
 import useNewChat from '~/hooks/Chat/useNewChat';
 import { useLocalize } from '~/hooks';
+import { cn } from '~/utils';
 import store from '~/store';
 
+const AccountSettings = lazy(() => import('~/components/Nav/AccountSettings'));
+
 /**
- * Search and new chat are the two most frequent actions in the drawer, and both
- * sat in the top corner — the hardest place to reach one-handed. A flex footer
- * rather than an overlay, so the virtualized list shrinks around it and can
- * never be occluded.
+ * Pied du tiroir, à la manière de Claude : le compte à gauche (rond), puis le
+ * bouton « Nouvelle conversation » en pastille noire. Un pied flex plutôt
+ * qu'une surcouche, pour que la liste virtualisée se réduise autour de lui et
+ * ne soit jamais masquée.
  */
 function BottomBar({
   links,
@@ -62,9 +65,14 @@ function BottomBar({
 
   return (
     <div
-      className="flex flex-shrink-0 items-center gap-2 px-3 pt-2"
+      className="flex flex-shrink-0 items-center gap-3 px-4 pt-2"
       style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
     >
+      <div className="flex-shrink-0" data-testid="drawer-account">
+        <Suspense fallback={<Skeleton className="size-[52px] rounded-full" />}>
+          <AccountSettings collapsed />
+        </Suspense>
+      </div>
       {showSearch && (
         <div className="min-w-0 flex-1">
           <SearchBar isSmallScreen={true} />
@@ -72,7 +80,7 @@ function BottomBar({
       )}
       <Button
         asChild
-        className={showSearch ? 'h-11 flex-shrink-0 gap-2 rounded-full px-5' : 'h-11 w-full gap-2'}
+        className={cn('h-[52px] gap-2 rounded-full', showSearch ? 'flex-shrink-0 px-5' : 'min-w-0 flex-1')}
       >
         <a
           href="/c/new"
@@ -81,8 +89,8 @@ function BottomBar({
           aria-keyshortcuts={newChatAriaKey}
           onClick={handleNewChatClick}
         >
-          <SquarePen className="size-5" aria-hidden="true" />
-          <span className="text-sm font-medium">{localize('com_ui_new_chat')}</span>
+          <Plus className="size-5" aria-hidden="true" />
+          <span className="truncate text-base font-medium">{localize('com_ui_new_chat')}</span>
         </a>
       </Button>
     </div>
