@@ -2,6 +2,7 @@ import { memo, useId, useMemo, useState } from 'react';
 import * as Ariakit from '@ariakit/react';
 import { ChevronDown } from 'lucide-react';
 import { DropdownPopup, buttonVariants } from '@librechat/client';
+import type { ReactNode } from 'react';
 import type { NavLink } from '~/common';
 import type * as t from '~/common';
 import { useActivePanel, resolveActivePanel } from '~/Providers';
@@ -12,17 +13,25 @@ import { cn } from '~/utils';
  * Doubles as the drawer's title: it names the panel you are in and is also how
  * you leave it. Replaces the icon rail's ten unlabelled glyphs with labelled
  * rows, and costs no standing width.
+ *
+ * With `rowLabel` it is drawn as a plain menu row instead (icon + label, no
+ * chevron): the drawer header lists the main panels itself and uses this row
+ * as the way to reach all the others.
  */
 function Switcher({
   links,
   onLeaveInsights,
   onNavigate,
   routeActiveId,
+  rowLabel,
+  rowIcon,
 }: {
   links: NavLink[];
   onLeaveInsights?: () => void;
   onNavigate?: () => void;
   routeActiveId?: string;
+  rowLabel?: string;
+  rowIcon?: ReactNode;
 }) {
   const localize = useLocalize();
   const menuId = useId();
@@ -31,6 +40,7 @@ function Switcher({
 
   const activeId = routeActiveId ?? resolveActivePanel(active, links);
   const activeLink = links.find((link) => link.id === activeId);
+  const asRow = rowLabel != null;
 
   const items = useMemo<t.MenuItemProps[]>(
     () =>
@@ -80,7 +90,7 @@ function Switcher({
       trigger={
         <Ariakit.MenuButton
           data-testid="panel-switcher-button"
-          aria-label={localize('com_nav_control_panel')}
+          aria-label={asRow ? rowLabel : localize('com_nav_control_panel')}
           aria-expanded={isOpen}
           /**
            * The drawer's primary navigation control, so it takes the shared
@@ -90,15 +100,29 @@ function Switcher({
            */
           className={cn(
             buttonVariants({ variant: 'ghost' }),
-            'h-10 min-w-0 flex-1 justify-start px-2 text-text-primary',
+            asRow
+              ? 'h-12 w-full justify-start gap-4 rounded-xl px-3 text-[1.05rem] font-normal text-text-primary'
+              : 'h-10 min-w-0 flex-1 justify-start px-2 text-text-primary',
           )}
         >
-          <activeLink.icon className="size-5 flex-shrink-0" aria-hidden="true" />
-          {/* Grows so the chevron settles on the trailing edge rather than trailing the label. */}
-          <span className="flex-1 truncate text-left text-sm font-medium">
-            {localize(activeLink.title)}
-          </span>
-          <ChevronDown className="size-4 flex-shrink-0 text-text-secondary" aria-hidden="true" />
+          {asRow ? (
+            <>
+              {rowIcon}
+              <span className="flex-1 truncate text-left">{rowLabel}</span>
+            </>
+          ) : (
+            <>
+              <activeLink.icon className="size-5 flex-shrink-0" aria-hidden="true" />
+              {/* Grows so the chevron settles on the trailing edge rather than trailing the label. */}
+              <span className="flex-1 truncate text-left text-sm font-medium">
+                {localize(activeLink.title)}
+              </span>
+              <ChevronDown
+                className="size-4 flex-shrink-0 text-text-secondary"
+                aria-hidden="true"
+              />
+            </>
+          )}
         </Ariakit.MenuButton>
       }
     />
