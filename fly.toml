@@ -17,6 +17,9 @@ primary_region = 'ams'
   # Liste fixe des modèles Gemini. Le premier est celui que LibreChat utilise par défaut
   # (notamment pour les appels d'outils) : gemini-3-pro-preview n'existe plus chez Google.
   GOOGLE_MODELS = 'gemini-3.1-pro-preview,gemini-3.8-flash,gemini-3-flash-preview,gemini-3.1-flash-lite,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite'
+  # « Exécuter du code » : le code est exécuté sur ton terminal Fly.io, via le Worker « code-api ».
+  # La clé d'accès est saisie dans l'interface quand LibreChat la demande.
+  LIBRECHAT_CODE_BASEURL = 'https://code-api.hounmetinjeremy.workers.dev'
 
 [http_service]
   internal_port = 3080
