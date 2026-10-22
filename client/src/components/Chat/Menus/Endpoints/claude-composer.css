@@ -97,3 +97,66 @@
     display: none !important;
   }
 }
+
+/* Menu latéral sur téléphone, comme Claude : tiroir à ~88 % de la largeur,
+   fond chaud, coins arrondis à droite, compte rond et grosse pastille noire en bas.
+   La variable est lue à la fois par le tiroir et par la page qu'il pousse. */
+@media (max-width: 767px) {
+  :root {
+    --mobile-drawer-width: 88%;
+  }
+
+  #mobile-drawer {
+    background-color: #f4f3ee !important;
+    border-radius: 0 1.75rem 1.75rem 0;
+    box-shadow: 0 0 2.5rem rgba(0, 0, 0, 0.18);
+    overflow: hidden;
+  }
+
+  .dark #mobile-drawer {
+    background-color: #262624 !important;
+  }
+
+  #mobile-drawer #chat-history-nav {
+    background-color: transparent !important;
+  }
+
+  /* La liste ne garde que les conversations : plus de « Projects », de titre
+     « Conversations » ni d'intitulés de dates (Aujourd'hui, Hier, ...). */
+  #mobile-drawer [role='region'] > div > div > :first-child:not(:last-child) {
+    display: none !important;
+  }
+
+  #mobile-drawer [role='region'] > div > div > :last-child > .px-3:first-child {
+    display: none !important;
+  }
+
+  #mobile-drawer [data-testid='convo-list-row'] h2 {
+    display: none !important;
+  }
+
+  /* Compte : rond, plus grand, à gauche de la pastille. */
+  #mobile-drawer [data-testid='nav-user'] {
+    width: 3.25rem;
+    height: 3.25rem;
+    border-radius: 9999px;
+    background-color: #d9775a;
+    color: white;
+  }
+
+  #mobile-drawer [data-testid='nav-user'] > div {
+    transform: scale(1.55);
+  }
+
+  /* Pastille « Nouvelle conversation » : noire, bien ronde. */
+  #mobile-drawer a[data-testid='nav-new-chat-fab'] {
+    background-color: #171717 !important;
+    color: #ffffff !important;
+    border-radius: 9999px;
+  }
+
+  .dark #mobile-drawer a[data-testid='nav-new-chat-fab'] {
+    background-color: #f4f3ee !important;
+    color: #171717 !important;
+  }
+}
