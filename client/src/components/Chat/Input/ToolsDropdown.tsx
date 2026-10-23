@@ -483,14 +483,27 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
       !!statusIconProps &&
       shouldShowActionButton(statusIconProps) &&
       (connectionState === 'disconnected' || connectionState === 'error');
-    const hasCustomVars =
-      connectionState === 'connected' && statusIconProps?.hasCustomUserVars === true;
+    const hasCustomVars = statusIconProps?.hasCustomUserVars === true;
+    const connectedWithVars = connectionState === 'connected' && hasCustomVars;
     const checked = mcpServerManager.mcpValues?.includes(name) ?? false;
     const serverUrl = (server.config as { url?: string } | undefined)?.url;
 
-    const openConnect = (e: React.MouseEvent) => {
+    /** « Connecter » : lance directement l'autorisation du compte (page d'accueil du serveur),
+     *  sans fenêtre intermédiaire. Seuls les serveurs qui demandent des réglages personnels
+     *  (clés, identifiants) passent par la fenêtre de configuration. */
+    const handleConnect = (e: React.MouseEvent) => {
       e.stopPropagation();
-      /** La fenêtre de connexion s'affiche au-dessus de la page : on referme la feuille. */
+      if (hasCustomVars) {
+        setIsOpen(false);
+        statusIconProps?.onConfigClick(e);
+        return;
+      }
+      void mcpServerManager.initializeServer(name);
+    };
+
+    /** Engrenage : réglages personnels d'un serveur déjà connecté. */
+    const handleConfigure = (e: React.MouseEvent) => {
+      e.stopPropagation();
       setIsOpen(false);
       statusIconProps?.onConfigClick(e);
     };
@@ -520,7 +533,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
         ) : needsConnect ? (
           <button
             type="button"
-            onClick={openConnect}
+            onClick={handleConnect}
             aria-label={localize('com_nav_mcp_connect_server', { 0: name })}
             className="shrink-0 rounded-full bg-text-primary px-4 py-2 text-sm font-medium text-surface-primary"
           >
@@ -528,10 +541,10 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
           </button>
         ) : (
           <>
-            {hasCustomVars && (
+            {connectedWithVars && (
               <button
                 type="button"
-                onClick={openConnect}
+                onClick={handleConfigure}
                 aria-label={localize('com_nav_mcp_configure_server', { 0: name })}
                 className="rounded-full p-2 text-text-secondary hover:bg-surface-hover"
               >
