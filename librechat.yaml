@@ -21,6 +21,20 @@ endpoints:
       titleModel: "current_model"
       modelDisplayLabel: "DeepSeek"
 
+    # DeepSeek R1 (14B) hébergé sur un GPU Modal (service deepseek-api).
+    # Texte uniquement. Le GPU s'éteint après 5 min d'inactivité : le premier
+    # message après une pause peut prendre environ 3 minutes (démarrage à froid).
+    # Clé à saisir dans l'interface : la clé API du service Modal.
+    - name: "DeepSeek GPU"
+      apiKey: "user_provided"
+      baseURL: "https://g64203490--deepseek-api-serve.us-east.modal.run/v1"
+      models:
+        default: ["deepseek-r1"]
+        fetch: false
+      titleConvo: true
+      titleModel: "current_model"
+      modelDisplayLabel: "DeepSeek GPU"
+
 mcpServers:
   cloudflare:
     type: streamable-http
