@@ -1,13 +1,24 @@
 version: 1.2.1
 
 interface:
-  agents: false
-  webSearch: false
-  runCode: false
   mcpServers:
     use: true
     create: true
     share: false
+
+# Limite l'historique renvoyé à chaque message (cause principale de la consommation).
+# Les anciens messages au-delà de 8000 tokens ne sont plus envoyés à DeepSeek.
+modelSpecs:
+  enforce: false
+  prioritize: true
+  list:
+    - name: "deepseek-flash-eco"
+      label: "DeepSeek Flash (éco)"
+      default: true
+      preset:
+        endpoint: "DeepSeek"
+        model: "deepseek-v4-flash"
+        maxContextTokens: 8000
 
 endpoints:
   custom:
