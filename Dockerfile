@@ -56,6 +56,9 @@ RUN \
 
 COPY --chown=node:node . .
 
+# Limite l'historique envoyé au modèle aux N derniers messages (défaut 6, voir patch-history-limit.js)
+RUN node patch-history-limit.js
+
 RUN \
     # React client build with configurable memory
     NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}" npm run frontend; \
