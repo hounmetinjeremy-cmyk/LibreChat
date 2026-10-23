@@ -1,6 +1,9 @@
 version: 1.2.1
 
 interface:
+  agents: false
+  webSearch: false
+  runCode: false
   mcpServers:
     use: true
     create: true
@@ -11,28 +14,29 @@ endpoints:
     # DeepSeek passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
     # sont d'abord lus par Gemini, puis le texte est transmis à DeepSeek.
     # Clé à saisir dans l'interface : clé_deepseek,clé_gemini (séparées par une virgule).
+    # Modèle unique = flash (moins cher). titleConvo désactivé : chaque titre
+    # automatique était un appel API supplémentaire avec le modèle courant.
     - name: "DeepSeek"
       apiKey: "user_provided"
       baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
       models:
-        default: ["deepseek-chat", "deepseek-reasoner"]
-        fetch: true
-      titleConvo: true
-      titleModel: "current_model"
+        default: ["deepseek-v4-flash"]
+        fetch: false
+      titleConvo: false
       modelDisplayLabel: "DeepSeek"
 
     # DeepSeek R1 (14B) hébergé sur un GPU Modal (service deepseek-api).
     # Texte uniquement. Le GPU s'éteint après 5 min d'inactivité : le premier
     # message après une pause peut prendre environ 3 minutes (démarrage à froid).
     # Clé à saisir dans l'interface : la clé API du service Modal.
+    # titleConvo désactivé : un titre automatique réveillait le GPU pour rien.
     - name: "DeepSeek GPU"
       apiKey: "user_provided"
       baseURL: "https://g64203490--deepseek-api-serve.us-east.modal.run/v1"
       models:
         default: ["deepseek-r1"]
         fetch: false
-      titleConvo: true
-      titleModel: "current_model"
+      titleConvo: false
       modelDisplayLabel: "DeepSeek GPU"
 
 mcpServers:
