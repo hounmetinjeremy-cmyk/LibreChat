@@ -23,7 +23,10 @@ interface AddCustomMCPServerDialogProps {
 
 interface RequestError {
   message?: string;
-  response?: { status?: number; data?: { error?: string; message?: string } };
+  response?: {
+    status?: number;
+    data?: { error?: string; message?: string; errors?: Array<{ message?: string }> };
+  };
 }
 
 /**
@@ -32,8 +35,12 @@ interface RequestError {
  * without needing an admin to touch librechat.yaml.
  *
  * POSTs to the existing, already-implemented backend route:
- *   POST /api/mcp/servers  { name, url, requiresOAuth }
+ *   POST /api/mcp/servers  { config: { type, title, url, oauth? } }
  * (see api/server/routes/mcp.js — "MCP Server CRUD Routes (User-Managed MCP Servers)")
+ *
+ * The backend validates `req.body.config` against MCPServerUserInputSchema, so the
+ * payload MUST be wrapped in `config` and use `title` (not `name`). `requiresOAuth`
+ * is server-managed and is stripped from user input; OAuth is flagged with `oauth`.
  *
  * The call goes through the data-provider's request helper so that it carries the
  * user's access token (a bare fetch has none, which the API answers with HTTP 401).
@@ -68,10 +75,12 @@ export default function AddCustomMCPServerDialog({
     setError(null);
     try {
       await request.post('/api/mcp/servers', {
-        name: name.trim(),
-        url: url.trim(),
-        requiresOAuth,
-        type: 'streamable-http',
+        config: {
+          type: 'streamable-http',
+          title: name.trim(),
+          url: url.trim(),
+          ...(requiresOAuth ? { oauth: {} } : {}),
+        },
       });
 
       onCreated?.();
@@ -83,7 +92,12 @@ export default function AddCustomMCPServerDialog({
     } catch (err) {
       const e = err as RequestError;
       const status = e.response?.status;
-      const detail = e.response?.data?.error || e.response?.data?.message;
+      const data = e.response?.data;
+      const issues = data?.errors
+        ?.map((issue) => issue?.message)
+        .filter(Boolean)
+        .join(' · ');
+      const detail = [data?.error || data?.message, issues].filter(Boolean).join(' : ');
       if (status === 401) {
         setError(
           detail ||
