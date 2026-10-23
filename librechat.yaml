@@ -1,4 +1,11 @@
 version: 1.2.1
+
+interface:
+  mcpServers:
+    use: true
+    create: true
+    share: false
+
 endpoints:
   custom:
     # DeepSeek passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
