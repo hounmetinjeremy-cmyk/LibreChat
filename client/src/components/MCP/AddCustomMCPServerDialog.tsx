@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { request } from 'librechat-data-provider';
 import {
   Input,
   Label,
@@ -20,6 +21,11 @@ interface AddCustomMCPServerDialogProps {
   onCreated?: () => void;
 }
 
+interface RequestError {
+  message?: string;
+  response?: { status?: number; data?: { error?: string; message?: string } };
+}
+
 /**
  * "Ajouter un connecteur personnalisé" — lets any user with MCP create
  * permission register their own MCP server (Name + URL + optional OAuth),
@@ -28,6 +34,9 @@ interface AddCustomMCPServerDialogProps {
  * POSTs to the existing, already-implemented backend route:
  *   POST /api/mcp/servers  { name, url, requiresOAuth }
  * (see api/server/routes/mcp.js — "MCP Server CRUD Routes (User-Managed MCP Servers)")
+ *
+ * The call goes through the data-provider's request helper so that it carries the
+ * user's access token (a bare fetch has none, which the API answers with HTTP 401).
  */
 export default function AddCustomMCPServerDialog({
   isOpen,
@@ -58,27 +67,12 @@ export default function AddCustomMCPServerDialog({
     setIsSubmitting(true);
     setError(null);
     try {
-      const token =
-        typeof window !== 'undefined' ? window.localStorage.getItem('token') : null;
-      const response = await fetch('/api/mcp/servers', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          name: name.trim(),
-          url: url.trim(),
-          requiresOAuth,
-          type: 'streamable-http',
-        }),
+      await request.post('/api/mcp/servers', {
+        name: name.trim(),
+        url: url.trim(),
+        requiresOAuth,
+        type: 'streamable-http',
       });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}) as { error?: string });
-        throw new Error(data?.error || `HTTP ${response.status}`);
-      }
 
       onCreated?.();
       resetAndClose();
@@ -87,7 +81,17 @@ export default function AddCustomMCPServerDialog({
       // the exact React Query key used by useMCPServerManager is confirmed.
       window.location.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Une erreur est survenue.');
+      const e = err as RequestError;
+      const status = e.response?.status;
+      const detail = e.response?.data?.error || e.response?.data?.message;
+      if (status === 401) {
+        setError(
+          detail ||
+            'Session expirée : recharge la page ou reconnecte-toi, puis réessaie. Si le problème persiste, active « Connexion requise ».',
+        );
+      } else {
+        setError(detail || e.message || 'Une erreur est survenue.');
+      }
     } finally {
       setIsSubmitting(false);
     }
