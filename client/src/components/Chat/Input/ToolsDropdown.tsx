@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom';
 import { TooltipAnchor, VectorIcon, MCPIcon, Spinner } from '@librechat/client';
 import {
+  Blocks,
   Brain,
   Camera,
   Check,
@@ -41,7 +42,7 @@ interface ToolsDropdownProps {
   disabled?: boolean;
 }
 
-type MenuView = 'root' | 'artifacts';
+type MenuView = 'root' | 'artifacts' | 'mcp';
 
 /** Ouvre le menu d'envoi de fichiers existant (trombone), sans le dupliquer. */
 const openExistingAttachMenu = () => {
@@ -88,6 +89,44 @@ const ToolRow = ({
   </div>
 );
 
+/** Logo d'un serveur MCP : l'icône définie pour le serveur si elle existe, sinon le logo
+ *  du site du serveur (favicon), sinon l'icône MCP standard. */
+const ServerIcon = ({ iconPath, url }: { iconPath?: string; url?: string }) => {
+  const [failed, setFailed] = useState(false);
+
+  if (iconPath) {
+    return (
+      <CustomIcon
+        src={iconPath}
+        className="size-11 rounded-full object-cover text-text-primary"
+        alt=""
+      />
+    );
+  }
+
+  let favicon: string | undefined;
+  if (url) {
+    try {
+      favicon = `https://icons.duckduckgo.com/ip3/${new URL(url).hostname}.ico`;
+    } catch {
+      favicon = undefined;
+    }
+  }
+
+  if (!favicon || failed) {
+    return <MCPIcon className="size-5" aria-hidden={true} />;
+  }
+
+  return (
+    <img
+      src={favicon}
+      alt=""
+      className="size-7 object-contain"
+      onError={() => setFailed(true)}
+    />
+  );
+};
+
 const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const localize = useLocalize();
   const context = useBadgeRowContext();
@@ -128,6 +167,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [view, setView] = useState<MenuView>('root');
   const [isAddCustomOpen, setIsAddCustomOpen] = useState(false);
+  const [isConnectorsMenuOpen, setIsConnectorsMenuOpen] = useState(false);
   const isDisabled = disabled ?? false;
 
   const {
@@ -164,15 +204,16 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     }
   }, [canRunCode, codeEnabled, codeInterpreter]);
 
-  /** Rafraîchit l'état des connecteurs tant que la feuille est ouverte. */
+  /** Rafraîchit l'état des connecteurs tant que la liste est ouverte. */
   useMCPRefresh({
-    enabled: isOpen && selectableServers.length > 0,
+    enabled: isOpen && view === 'mcp' && selectableServers.length > 0,
   });
 
   /** Quand la feuille se ferme, on revient toujours à la liste principale. */
   useEffect(() => {
     if (!isOpen) {
       setView('root');
+      setIsConnectorsMenuOpen(false);
     }
   }, [isOpen]);
 
@@ -249,6 +290,8 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     { id: 'photos', label: 'Photos', Icon: ImageIcon },
     { id: 'files', label: 'Fichiers', Icon: FileUp },
   ];
+
+  const showMcp = canUseMcp && !!mcpServerManager;
 
   /** Lignes de la liste principale. */
   const rootRows: React.ReactNode[] = [];
@@ -367,6 +410,24 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     );
   }
 
+  if (showMcp) {
+    rootRows.push(
+      <button
+        key="connectors"
+        type="button"
+        data-testid="tools-menu-mcp"
+        onClick={() => setView('mcp')}
+        className="flex w-full items-center gap-3 text-left"
+      >
+        <ToolRow
+          Icon={Blocks}
+          label="Connecteurs"
+          right={<ChevronRight className="size-5 text-text-secondary" aria-hidden="true" />}
+        />
+      </button>,
+    );
+  }
+
   /** Panneau Artefacts : remplace la liste, avec une flèche retour. */
   const artifactsPanel = (
     <div className="flex flex-col gap-1">
@@ -403,8 +464,9 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     </div>
   );
 
-  /** Une ligne par serveur MCP (ajouté dans l'interface admin ou en configuration) :
-   *  son icône, son nom, et un bouton « Connecter » tant que le compte n'est pas relié. */
+  /** Une ligne par serveur MCP (ajouté dans l'interface admin, en configuration, ou par
+   *  l'utilisateur) : son logo, son nom, et un bouton « Connecter » tant que le compte de
+   *  l'utilisateur n'est pas relié au serveur. */
   const renderMcpServer = (server: (typeof selectableServers)[number]) => {
     if (!mcpServerManager) {
       return null;
@@ -424,6 +486,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     const hasCustomVars =
       connectionState === 'connected' && statusIconProps?.hasCustomUserVars === true;
     const checked = mcpServerManager.mcpValues?.includes(name) ?? false;
+    const serverUrl = (server.config as { url?: string } | undefined)?.url;
 
     const openConnect = (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -439,15 +502,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
         className="flex w-full items-center gap-3 py-2"
       >
         <span className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-surface-tertiary">
-          {server.config?.iconPath ? (
-            <CustomIcon
-              src={server.config.iconPath}
-              className="size-11 rounded-full object-cover text-text-primary"
-              alt=""
-            />
-          ) : (
-            <MCPIcon className="size-5" aria-hidden={true} />
-          )}
+          <ServerIcon iconPath={server.config?.iconPath} url={serverUrl} />
         </span>
         <span className="min-w-0 flex-1 text-left">
           <span className="block truncate text-base text-text-primary">{displayName}</span>
@@ -498,8 +553,42 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     );
   };
 
+  /** Panneau Connecteurs : liste des serveurs, et menu d'ajout (+). */
   const mcpConfigDialogProps = mcpServerManager?.getConfigDialogProps?.();
-  const showMcp = canUseMcp && !!mcpServerManager;
+  const mcpPanel = mcpServerManager ? (
+    <div className="relative flex flex-col gap-1">
+      {isConnectorsMenuOpen && (
+        <div className="absolute right-0 top-0 z-10 flex w-72 flex-col rounded-xl border border-border-light bg-surface-secondary p-1 shadow-lg">
+          <button
+            type="button"
+            onClick={() => setIsConnectorsMenuOpen(false)}
+            className="rounded-lg px-3 py-2 text-left text-sm hover:bg-surface-hover"
+          >
+            Parcourir les connecteurs
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsConnectorsMenuOpen(false);
+              setIsOpen(false);
+              setIsAddCustomOpen(true);
+            }}
+            className="rounded-lg px-3 py-2 text-left text-sm hover:bg-surface-hover"
+          >
+            Ajouter un connecteur personnalisé
+          </button>
+        </div>
+      )}
+
+      {selectableServers.length === 0 && (
+        <p className="px-2 py-6 text-center text-sm text-text-secondary">
+          Aucun connecteur pour le moment. Appuie sur + pour en ajouter un.
+        </p>
+      )}
+
+      {selectableServers.map((server) => renderMcpServer(server))}
+    </div>
+  ) : null;
 
   const menuTrigger = (
     <TooltipAnchor
@@ -525,7 +614,8 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     />
   );
 
-  const title = view === 'artifacts' ? 'Artefacts' : 'Ajouter à la conversation';
+  const title =
+    view === 'artifacts' ? 'Artefacts' : view === 'mcp' ? 'Connecteurs' : 'Ajouter à la conversation';
 
   return (
     <>
@@ -570,7 +660,18 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
                   </button>
                 )}
                 <span className="text-base font-semibold text-text-primary">{title}</span>
-                <span className="size-9" aria-hidden="true" />
+                {view === 'mcp' ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsConnectorsMenuOpen((open) => !open)}
+                    aria-label="Ajouter un connecteur"
+                    className="rounded-full p-2 hover:bg-surface-hover"
+                  >
+                    <Plus className="size-5" aria-hidden="true" />
+                  </button>
+                ) : (
+                  <span className="size-9" aria-hidden="true" />
+                )}
               </div>
 
               <div className="flex-1 overflow-y-auto px-4 pb-6">
@@ -601,42 +702,10 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
                         </div>
                       ))}
                     </div>
-
-                    {showMcp && (
-                      <div data-testid="tools-menu-mcp" className="pt-5">
-                        <p className="px-1 pb-2 text-sm text-text-secondary">Connecteurs</p>
-                        <div className="flex flex-col rounded-2xl bg-surface-secondary px-3 py-1">
-                          {selectableServers.map((server, i) => (
-                            <div
-                              key={server.serverName}
-                              className={cn(i > 0 && 'border-t border-border-light')}
-                            >
-                              {renderMcpServer(server)}
-                            </div>
-                          ))}
-                          <div
-                            className={cn(
-                              selectableServers.length > 0 && 'border-t border-border-light',
-                            )}
-                          >
-                            <button
-                              type="button"
-                              data-testid="tools-menu-add-connector"
-                              onClick={() => {
-                                setIsOpen(false);
-                                setIsAddCustomOpen(true);
-                              }}
-                              className="flex w-full items-center gap-3 text-left"
-                            >
-                              <ToolRow Icon={Plus} label="Ajouter un connecteur personnalisé" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </>
                 )}
                 {view === 'artifacts' && artifactsPanel}
+                {view === 'mcp' && mcpPanel}
               </div>
             </div>
           </div>,
