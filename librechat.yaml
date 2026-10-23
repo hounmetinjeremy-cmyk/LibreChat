@@ -7,7 +7,8 @@ interface:
     share: false
 
 # Limite l'historique renvoyé à chaque message (cause principale de la consommation).
-# Les anciens messages au-delà de 8000 tokens ne sont plus envoyés à DeepSeek.
+# 3000 tokens = environ les 4 à 6 derniers messages (questions + réponses courtes).
+# Les anciens messages au-delà ne sont plus envoyés à DeepSeek.
 modelSpecs:
   enforce: false
   prioritize: true
@@ -18,7 +19,7 @@ modelSpecs:
       preset:
         endpoint: "DeepSeek"
         model: "deepseek-v4-flash"
-        maxContextTokens: 8000
+        maxContextTokens: 3000
 
 endpoints:
   custom:
