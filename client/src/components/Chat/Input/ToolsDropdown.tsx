@@ -1,8 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { TooltipAnchor, VectorIcon, MCPIcon } from '@librechat/client';
+import { TooltipAnchor, VectorIcon, MCPIcon, Spinner } from '@librechat/client';
 import {
-  Blocks,
   Brain,
   Camera,
   Check,
@@ -33,6 +32,8 @@ import {
 import { useMCPRefresh } from '~/hooks/MCP/useMCPRefresh';
 import MCPConfigDialog from '~/components/MCP/MCPConfigDialog';
 import AddCustomMCPServerDialog from '~/components/MCP/AddCustomMCPServerDialog';
+import { shouldShowActionButton } from '~/components/MCP/mcpServerUtils';
+import CustomIcon from '~/components/ui/CustomIcon';
 import { useBadgeRowContext } from '~/Providers';
 import { cn } from '~/utils';
 
@@ -40,7 +41,7 @@ interface ToolsDropdownProps {
   disabled?: boolean;
 }
 
-type MenuView = 'root' | 'artifacts' | 'mcp';
+type MenuView = 'root' | 'artifacts';
 
 /** Ouvre le menu d'envoi de fichiers existant (trombone), sans le dupliquer. */
 const openExistingAttachMenu = () => {
@@ -127,7 +128,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [view, setView] = useState<MenuView>('root');
   const [isAddCustomOpen, setIsAddCustomOpen] = useState(false);
-  const [isConnectorsMenuOpen, setIsConnectorsMenuOpen] = useState(false);
   const isDisabled = disabled ?? false;
 
   const {
@@ -164,16 +164,15 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     }
   }, [canRunCode, codeEnabled, codeInterpreter]);
 
-  /** Rafraîchit la liste des connecteurs tant que la feuille est ouverte. */
+  /** Rafraîchit l'état des connecteurs tant que la feuille est ouverte. */
   useMCPRefresh({
-    enabled: isOpen && view === 'mcp' && selectableServers.length > 0,
+    enabled: isOpen && selectableServers.length > 0,
   });
 
   /** Quand la feuille se ferme, on revient toujours à la liste principale. */
   useEffect(() => {
     if (!isOpen) {
       setView('root');
-      setIsConnectorsMenuOpen(false);
     }
   }, [isOpen]);
 
@@ -368,24 +367,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     );
   }
 
-  if (canUseMcp && mcpServerManager) {
-    rootRows.push(
-      <button
-        key="connectors"
-        type="button"
-        data-testid="tools-menu-mcp"
-        onClick={() => setView('mcp')}
-        className="flex w-full items-center gap-3 text-left"
-      >
-        <ToolRow
-          Icon={Blocks}
-          label="Connecteurs"
-          right={<ChevronRight className="size-5 text-text-secondary" aria-hidden="true" />}
-        />
-      </button>,
-    );
-  }
-
   /** Panneau Artefacts : remplace la liste, avec une flèche retour. */
   const artifactsPanel = (
     <div className="flex flex-col gap-1">
@@ -422,56 +403,103 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     </div>
   );
 
-  /** Panneau Connecteurs : liste, ajout, et configuration. */
-  const mcpConfigDialogProps = mcpServerManager?.getConfigDialogProps?.();
-  const mcpPanel = mcpServerManager ? (
-    <div className="relative flex flex-col gap-1">
-      {isConnectorsMenuOpen && (
-        <div className="absolute right-0 top-0 z-10 flex w-72 flex-col rounded-xl border border-border-light bg-surface-secondary p-1 shadow-lg">
-          <button
-            type="button"
-            onClick={() => setIsConnectorsMenuOpen(false)}
-            className="rounded-lg px-3 py-2 text-left text-sm hover:bg-surface-hover"
-          >
-            Parcourir les connecteurs
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setIsConnectorsMenuOpen(false);
-              setIsAddCustomOpen(true);
-            }}
-            className="rounded-lg px-3 py-2 text-left text-sm hover:bg-surface-hover"
-          >
-            Ajouter un connecteur personnalisé
-          </button>
-        </div>
-      )}
+  /** Une ligne par serveur MCP (ajouté dans l'interface admin ou en configuration) :
+   *  son icône, son nom, et un bouton « Connecter » tant que le compte n'est pas relié. */
+  const renderMcpServer = (server: (typeof selectableServers)[number]) => {
+    if (!mcpServerManager) {
+      return null;
+    }
+    const name = server.serverName;
+    const displayName = server.config?.title || name;
+    const status = mcpServerManager.connectionStatus?.[name];
+    const statusIconProps = mcpServerManager.getServerStatusIconProps(name);
+    const connectionState = status?.connectionState;
+    const initializing =
+      mcpServerManager.isInitializing(name) || connectionState === 'connecting';
+    const needsConnect =
+      !initializing &&
+      !!statusIconProps &&
+      shouldShowActionButton(statusIconProps) &&
+      (connectionState === 'disconnected' || connectionState === 'error');
+    const hasCustomVars =
+      connectionState === 'connected' && statusIconProps?.hasCustomUserVars === true;
+    const checked = mcpServerManager.mcpValues?.includes(name) ?? false;
 
-      {selectableServers.map((server) => {
-        const checked = mcpServerManager.mcpValues?.includes(server.serverName) ?? false;
-        return (
-          <button
-            key={server.serverName}
-            type="button"
-            onClick={() => mcpServerManager.toggleServerSelection(server.serverName)}
-            className="flex w-full items-center gap-3 rounded-lg text-left hover:bg-surface-hover"
-          >
-            <ToolRow
-              Icon={MCPIcon}
-              label={server.serverName}
-              right={<ToggleSwitch checked={checked} />}
+    const openConnect = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      /** La fenêtre de connexion s'affiche au-dessus de la page : on referme la feuille. */
+      setIsOpen(false);
+      statusIconProps?.onConfigClick(e);
+    };
+
+    return (
+      <div
+        key={name}
+        data-testid={`tools-menu-mcp-${name}`}
+        className="flex w-full items-center gap-3 py-2"
+      >
+        <span className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-surface-tertiary">
+          {server.config?.iconPath ? (
+            <CustomIcon
+              src={server.config.iconPath}
+              className="size-11 rounded-full object-cover text-text-primary"
+              alt=""
             />
+          ) : (
+            <MCPIcon className="size-5" aria-hidden={true} />
+          )}
+        </span>
+        <span className="min-w-0 flex-1 text-left">
+          <span className="block truncate text-base text-text-primary">{displayName}</span>
+          {server.config?.description && (
+            <span className="block truncate text-xs text-text-secondary">
+              {server.config.description}
+            </span>
+          )}
+        </span>
+        {initializing ? (
+          <Spinner
+            className="size-5 text-text-primary"
+            aria-label={localize('com_nav_mcp_status_connecting', { 0: name })}
+          />
+        ) : needsConnect ? (
+          <button
+            type="button"
+            onClick={openConnect}
+            aria-label={localize('com_nav_mcp_connect_server', { 0: name })}
+            className="shrink-0 rounded-full bg-text-primary px-4 py-2 text-sm font-medium text-surface-primary"
+          >
+            Connecter
           </button>
-        );
-      })}
+        ) : (
+          <>
+            {hasCustomVars && (
+              <button
+                type="button"
+                onClick={openConnect}
+                aria-label={localize('com_nav_mcp_configure_server', { 0: name })}
+                className="rounded-full p-2 text-text-secondary hover:bg-surface-hover"
+              >
+                <Settings className="size-4" aria-hidden="true" />
+              </button>
+            )}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={checked}
+              aria-label={displayName}
+              onClick={() => mcpServerManager.toggleServerSelection(name)}
+            >
+              <ToggleSwitch checked={checked} />
+            </button>
+          </>
+        )}
+      </div>
+    );
+  };
 
-      {mcpConfigDialogProps && (
-        <MCPConfigDialog {...mcpConfigDialogProps} storageContextKey={storageContextKey} />
-      )}
-      <AddCustomMCPServerDialog isOpen={isAddCustomOpen} onOpenChange={setIsAddCustomOpen} />
-    </div>
-  ) : null;
+  const mcpConfigDialogProps = mcpServerManager?.getConfigDialogProps?.();
+  const showMcp = canUseMcp && !!mcpServerManager;
 
   const menuTrigger = (
     <TooltipAnchor
@@ -497,8 +525,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     />
   );
 
-  const title =
-    view === 'artifacts' ? 'Artefacts' : view === 'mcp' ? 'Connecteurs' : 'Ajouter à la conversation';
+  const title = view === 'artifacts' ? 'Artefacts' : 'Ajouter à la conversation';
 
   return (
     <>
@@ -543,18 +570,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
                   </button>
                 )}
                 <span className="text-base font-semibold text-text-primary">{title}</span>
-                {view === 'mcp' ? (
-                  <button
-                    type="button"
-                    onClick={() => setIsConnectorsMenuOpen((open) => !open)}
-                    aria-label="Ajouter un connecteur"
-                    className="rounded-full p-2 hover:bg-surface-hover"
-                  >
-                    <Plus className="size-5" aria-hidden="true" />
-                  </button>
-                ) : (
-                  <span className="size-9" aria-hidden="true" />
-                )}
+                <span className="size-9" aria-hidden="true" />
               </div>
 
               <div className="flex-1 overflow-y-auto px-4 pb-6">
@@ -585,15 +601,55 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
                         </div>
                       ))}
                     </div>
+
+                    {showMcp && (
+                      <div data-testid="tools-menu-mcp" className="pt-5">
+                        <p className="px-1 pb-2 text-sm text-text-secondary">Connecteurs</p>
+                        <div className="flex flex-col rounded-2xl bg-surface-secondary px-3 py-1">
+                          {selectableServers.map((server, i) => (
+                            <div
+                              key={server.serverName}
+                              className={cn(i > 0 && 'border-t border-border-light')}
+                            >
+                              {renderMcpServer(server)}
+                            </div>
+                          ))}
+                          <div
+                            className={cn(
+                              selectableServers.length > 0 && 'border-t border-border-light',
+                            )}
+                          >
+                            <button
+                              type="button"
+                              data-testid="tools-menu-add-connector"
+                              onClick={() => {
+                                setIsOpen(false);
+                                setIsAddCustomOpen(true);
+                              }}
+                              className="flex w-full items-center gap-3 text-left"
+                            >
+                              <ToolRow Icon={Plus} label="Ajouter un connecteur personnalisé" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
                 {view === 'artifacts' && artifactsPanel}
-                {view === 'mcp' && mcpPanel}
               </div>
             </div>
           </div>,
           document.body,
         )}
+      {/* Fenêtres de connexion et d'ajout : montées hors de la feuille pour rester
+          visibles quand elle se referme. */}
+      {showMcp && mcpConfigDialogProps && (
+        <MCPConfigDialog {...mcpConfigDialogProps} storageContextKey={storageContextKey} />
+      )}
+      {showMcp && (
+        <AddCustomMCPServerDialog isOpen={isAddCustomOpen} onOpenChange={setIsAddCustomOpen} />
+      )}
     </>
   );
 };
