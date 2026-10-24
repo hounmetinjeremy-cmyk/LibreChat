@@ -21,6 +21,7 @@ endpoints:
     # Le nombre de messages d'historique est limité par patch-history-limit.js
     # (variable MAX_HISTORY_MESSAGES). Max Context Tokens : à régler dans l'interface
     # (3000 sans outil, 6000 avec des serveurs MCP légers).
+    # Température basse : moins de réponses inventées.
     - name: "DeepSeek"
       apiKey: "user_provided"
       baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
@@ -28,6 +29,8 @@ endpoints:
         default: ["deepseek-v4-flash"]
         fetch: false
       titleConvo: false
+      addParams:
+        temperature: 0.2
       modelDisplayLabel: "DeepSeek"
 
     # DeepSeek R1 (14B) hébergé sur un GPU Modal (service deepseek-api).
