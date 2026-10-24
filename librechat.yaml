@@ -6,21 +6,6 @@ interface:
     create: true
     share: false
 
-# Limite l'historique renvoyé à chaque message (cause principale de la consommation).
-# 3000 tokens = environ les 4 à 6 derniers messages (questions + réponses courtes).
-# Les anciens messages au-delà ne sont plus envoyés à DeepSeek.
-modelSpecs:
-  enforce: false
-  prioritize: true
-  list:
-    - name: "deepseek-flash-eco"
-      label: "DeepSeek Flash (éco)"
-      default: true
-      preset:
-        endpoint: "DeepSeek"
-        model: "deepseek-v4-flash"
-        maxContextTokens: 3000
-
 endpoints:
   custom:
     # DeepSeek passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
@@ -28,6 +13,9 @@ endpoints:
     # Clé à saisir dans l'interface : clé_deepseek,clé_gemini (séparées par une virgule).
     # Modèle unique = flash (moins cher). titleConvo désactivé : chaque titre
     # automatique était un appel API supplémentaire avec le modèle courant.
+    # Le nombre de messages d'historique est limité par patch-history-limit.js
+    # (variable MAX_HISTORY_MESSAGES). Max Context Tokens : à régler dans l'interface
+    # (16000 si un serveur MCP est utilisé).
     - name: "DeepSeek"
       apiKey: "user_provided"
       baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
