@@ -50,3 +50,11 @@ mcpServers:
     url: https://mcp.cloudflare.com/mcp
     requiresOAuth: true
     timeout: 60000
+
+  # Serveur GitHub léger (1 outil, environ 300 tokens). Chaque utilisateur clique
+  # « Connecter » : OAuth GitHub automatique, token stocké par LibreChat pour lui.
+  github:
+    type: streamable-http
+    url: https://github-mcp-lite.hounmetinjeremy.workers.dev
+    requiresOAuth: true
+    timeout: 60000
