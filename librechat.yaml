@@ -8,9 +8,13 @@ interface:
 
 endpoints:
   # Limite les boucles d'outils : chaque appel d'outil relance une requête avec tout le contexte.
+  # capabilities : seules les fonctions listées sont actives. Par défaut LibreChat ajoute à chaque
+  # requête les instructions de artifacts, skills, memory, web_search, execute_code, etc.,
+  # ce qui coûte des milliers de tokens. Les serveurs MCP (Cloudflare, GitHub) restent actifs.
   agents:
     recursionLimit: 25
     maxRecursionLimit: 40
+    capabilities: ["tools"]
 
   custom:
     # DeepSeek passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
