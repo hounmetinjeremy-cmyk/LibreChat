@@ -7,6 +7,11 @@ interface:
     share: false
 
 endpoints:
+  # Limite les boucles d'outils : chaque appel d'outil relance une requête avec tout le contexte.
+  agents:
+    recursionLimit: 8
+    maxRecursionLimit: 12
+
   custom:
     # DeepSeek passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
     # sont d'abord lus par Gemini, puis le texte est transmis à DeepSeek.
@@ -15,7 +20,7 @@ endpoints:
     # automatique était un appel API supplémentaire avec le modèle courant.
     # Le nombre de messages d'historique est limité par patch-history-limit.js
     # (variable MAX_HISTORY_MESSAGES). Max Context Tokens : à régler dans l'interface
-    # (16000 si un serveur MCP est utilisé).
+    # (3000 sans outil, 6000 avec des serveurs MCP légers).
     - name: "DeepSeek"
       apiKey: "user_provided"
       baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
