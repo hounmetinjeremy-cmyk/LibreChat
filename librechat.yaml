@@ -61,3 +61,12 @@ mcpServers:
     url: https://github-mcp-lite.hounmetinjeremy.workers.dev
     requiresOAuth: true
     timeout: 60000
+
+  # Génération de vidéos LTX-2.5 sur Modal (2 outils très courts : creer_video, etat_video).
+  # La clé n'est PAS écrite ici (dépôt public) : elle vient du secret Fly LTX_API_KEY.
+  video:
+    type: streamable-http
+    url: https://g64203490--ltx-2-5-mcp.us-east.modal.run/mcp
+    headers:
+      Authorization: "Bearer ${LTX_API_KEY}"
+    timeout: 60000
