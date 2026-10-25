@@ -16,7 +16,8 @@ endpoints:
     # DeepSeek passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
     # sont d'abord lus par Gemini, puis le texte est transmis à DeepSeek.
     # Clé à saisir dans l'interface : clé_deepseek,clé_gemini (séparées par une virgule).
-    # Modèle unique = flash (moins cher). titleConvo désactivé : chaque titre
+    # Noms affichés : « Jérémy Flash » (économique) et « Jérémy Pro » (environ 3 fois plus cher).
+    # vision-bridge les traduit vers les vrais modèles. titleConvo désactivé : chaque titre
     # automatique était un appel API supplémentaire avec le modèle courant.
     # Le nombre de messages d'historique est limité par patch-history-limit.js
     # (variable MAX_HISTORY_MESSAGES). Max Context Tokens : à régler dans l'interface
@@ -26,7 +27,7 @@ endpoints:
       apiKey: "user_provided"
       baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
       models:
-        default: ["deepseek-v4-flash"]
+        default: ["Jérémy Flash", "Jérémy Pro"]
         fetch: false
       titleConvo: false
       addParams:
