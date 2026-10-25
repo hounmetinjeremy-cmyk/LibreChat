@@ -62,6 +62,9 @@ RUN node patch-history-limit.js
 # Ajoute l'instruction de développement à tous les agents (voir dev-agent-prompt.txt)
 RUN node patch-agent-prompt.js
 
+# Ajoute le bouton « Résumé » sous les réponses avec outils (voir patch-resume-sheet.js)
+RUN node patch-resume-sheet.js
+
 RUN \
     # React client build with configurable memory
     NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}" npm run frontend; \
