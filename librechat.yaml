@@ -31,7 +31,7 @@ endpoints:
       titleConvo: false
       addParams:
         temperature: 0.2
-      modelDisplayLabel: "DeepSeek"
+      modelDisplayLabel: "Jérémy"
 
     # DeepSeek R1 (14B) hébergé sur un GPU Modal (service deepseek-api).
     # Texte uniquement. Le GPU s'éteint après 5 min d'inactivité : le premier
@@ -45,7 +45,7 @@ endpoints:
         default: ["deepseek-r1"]
         fetch: false
       titleConvo: false
-      modelDisplayLabel: "DeepSeek GPU"
+      modelDisplayLabel: "Jérémy GPU"
 
 mcpServers:
   cloudflare:
