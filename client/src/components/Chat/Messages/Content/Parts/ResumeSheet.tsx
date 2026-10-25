@@ -67,13 +67,41 @@ const buildSteps = (content: Array<any> | undefined, isSubmitting: boolean): Ste
   return steps;
 };
 
+export const hideActivity = (content?: Array<any>, attachments?: unknown): Array<any> | undefined => {
+  if (!content) {
+    return content;
+  }
+  const keep = new Set<string>();
+  if (Array.isArray(attachments)) {
+    attachments.forEach((a: any) => {
+      if (a && a.toolCallId) {
+        keep.add(a.toolCallId);
+      }
+    });
+  }
+  return content.filter((part) => {
+    if (!part) {
+      return true;
+    }
+    if (part.type === ContentTypes.THINK) {
+      return false;
+    }
+    if (part.type === ContentTypes.TOOL_CALL) {
+      const id = part[ContentTypes.TOOL_CALL]?.id;
+      return !!id && keep.has(id);
+    }
+    return true;
+  });
+};
+
 const ResumeSheet = memo(function ResumeSheet({ content, isSubmitting, nested }: Props) {
   const [open, setOpen] = useState(false);
   const steps = useMemo(() => buildSteps(content, !!isSubmitting), [content, isSubmitting]);
   if (nested || steps.length === 0) {
     return null;
   }
-  const activeKey = isSubmitting ? [...steps].reverse().find((s) => !s.done)?.key : undefined;
+  const activeStep = isSubmitting ? [...steps].reverse().find((s) => !s.done) : undefined;
+  const activeKey = activeStep ? activeStep.key : undefined;
   return (
     <>
       <button
@@ -84,6 +112,7 @@ const ResumeSheet = memo(function ResumeSheet({ content, isSubmitting, nested }:
       >
         <span className={'h-2 w-2 rounded-full ' + (activeKey ? 'bg-orange-500' : 'bg-gray-400')} />
         Résumé · {steps.length} {steps.length > 1 ? 'étapes' : 'étape'}
+        {activeStep ? ' · ' + activeStep.title + '…' : ''}
       </button>
       {open && (
         <div

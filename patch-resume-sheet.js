@@ -1,15 +1,23 @@
 // Patch de build : ajoute le bouton « Résumé » (fenêtre des étapes) sous chaque réponse
-// qui contient des outils ou de la réflexion. Si le point d'insertion est introuvable,
+// qui contient des outils ou de la réflexion, et retire l'ancien affichage (lignes « Ran N actions »
+// et « Pensées »). KEEP_OLD_ACTIVITY=1 garde l'ancien affichage. Si le point d'insertion est introuvable,
 // le patch est ignoré (avertissement) et le build continue sans le bouton.
 const fs = require('fs');
 const path = require('path');
 
 const file = path.join(__dirname, 'client', 'src', 'components', 'Chat', 'Messages', 'Content', 'ContentParts.tsx');
-const importLine = "import ResumeSheet from './Parts/ResumeSheet';\n";
+const importLine = "import ResumeSheet, { hideActivity } from './Parts/ResumeSheet';\n";
 const anchor = /<ContentPartsBody\s+\{\.\.\.props\}\s*\/>/g;
+const keepOld = process.env.KEEP_OLD_ACTIVITY === '1';
+const body = keepOld
+  ? '<ContentPartsBody {...props} />\n'
+  : '<ContentPartsBody\n' +
+    '          {...props}\n' +
+    '          content={hideActivity(props.content, props.attachments)}\n' +
+    '        />\n';
 const replacement =
   '<>\n' +
-  '        <ContentPartsBody {...props} />\n' +
+  '        ' + body +
   '        <ResumeSheet\n' +
   '          content={props.content}\n' +
   '          isSubmitting={props.isSubmitting}\n' +
