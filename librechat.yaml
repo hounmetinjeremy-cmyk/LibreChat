@@ -48,6 +48,22 @@ endpoints:
       titleConvo: false
       modelDisplayLabel: "Jérémy GPU"
 
+    # Génération de vidéos LTX-2.5 sur Modal. Le modèle choisi = la durée totale :
+    # video-12s, video-24s, video-36s, video-48s, video-60s.
+    # Mode d'emploi : joindre la photo du personnage (facultatif), écrire une scène par
+    # paragraphe (ligne vide entre chaque scène), envoyer. La vidéo est prête en quelques
+    # minutes ; le lien apparaît dans la réponse.
+    # Lien et clé à saisir dans l'interface (rien n'est écrit ici : dépôt public).
+    # titleConvo désactivé : un titre automatique lancerait une génération vidéo.
+    - name: "Vidéo"
+      apiKey: "user_provided"
+      baseURL: "user_provided"
+      models:
+        default: ["video-12s", "video-24s", "video-36s", "video-48s", "video-60s"]
+        fetch: false
+      titleConvo: false
+      modelDisplayLabel: "Vidéo"
+
 mcpServers:
   cloudflare:
     type: streamable-http
@@ -61,21 +77,4 @@ mcpServers:
     type: streamable-http
     url: https://github-mcp-lite.hounmetinjeremy.workers.dev
     requiresOAuth: true
-    timeout: 60000
-
-  # Génération de vidéos LTX-2.5 sur Modal (3 outils très courts : creer_video, etat_video, images).
-  # Le lien et la clé ne sont PAS écrits ici (dépôt public) : on les saisit dans
-  # l'interface LibreChat, comme les autres clés (icône du serveur « video »).
-  video:
-    type: streamable-http
-    url: "{{LTX_URL}}"
-    headers:
-      Authorization: "Bearer {{LTX_CLE}}"
-    customUserVars:
-      LTX_URL:
-        title: "Lien du serveur vidéo"
-        description: "Adresse du serveur vidéo (se termine par /mcp)"
-      LTX_CLE:
-        title: "Clé du serveur vidéo"
-        description: "Clé API du serveur vidéo"
     timeout: 60000
