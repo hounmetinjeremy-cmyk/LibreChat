@@ -63,11 +63,19 @@ mcpServers:
     requiresOAuth: true
     timeout: 60000
 
-  # Génération de vidéos LTX-2.5 sur Modal (2 outils très courts : creer_video, etat_video).
-  # La clé n'est PAS écrite ici (dépôt public) : elle vient du secret Fly LTX_API_KEY.
+  # Génération de vidéos LTX-2.5 sur Modal (3 outils très courts : creer_video, etat_video, images).
+  # Le lien et la clé ne sont PAS écrits ici (dépôt public) : on les saisit dans
+  # l'interface LibreChat, comme les autres clés (icône du serveur « video »).
   video:
     type: streamable-http
-    url: https://g64203490--ltx-2-5-mcp.us-east.modal.run/mcp
+    url: "{{LTX_URL}}"
     headers:
-      Authorization: "Bearer ${LTX_API_KEY}"
+      Authorization: "Bearer {{LTX_CLE}}"
+    customUserVars:
+      LTX_URL:
+        title: "Lien du serveur vidéo"
+        description: "Adresse du serveur vidéo (se termine par /mcp)"
+      LTX_CLE:
+        title: "Clé du serveur vidéo"
+        description: "Clé API du serveur vidéo"
     timeout: 60000
