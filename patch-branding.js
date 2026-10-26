@@ -1,5 +1,5 @@
-// Patch de build : met le nom « Jérémy » dans le code (titre, description, nom de l'application)
-// et remplace les logos par branding/logo.png (ou logo.jpg) s'il est présent dans le dépôt.
+// Patch de build : met le nom « Jérémy » partout dans le code (titre, manifeste, textes de l'interface)
+// et remplace les logos par branding/logo-256.png.b64 (ou logo.png / logo.jpg) s'il est présent dans le dépôt.
 // Ne fait jamais échouer la construction : tout problème est signalé par un avertissement.
 const fs = require('fs');
 const path = require('path');
@@ -18,34 +18,56 @@ function replaceIn(rel, pairs) {
   let n = 0;
   pairs.forEach(([from, to]) => {
     if (from.test(src)) {
+      from.lastIndex = 0;
       src = src.replace(from, to);
       n++;
     }
+    from.lastIndex = 0;
   });
   fs.writeFileSync(file, src);
   log(rel + ' : ' + n + ' remplacement(s)');
 }
 
+// « LibreChat » seul, sans toucher aux adresses (github.com/.../LibreChat) ni aux identifiants
+const NAME_ONLY = /(?<![\/\w.@-])LibreChat(?![\w-])/g;
+
 try {
   // 1. Le nom, directement dans le code
-  replaceIn('client/index.html', [
-    [/<title>LibreChat<\/title>/, '<title>' + NAME + '</title>'],
-    [/content="LibreChat - [^"]*"/, 'content="' + NAME + '"'],
-  ]);
+  replaceIn('client/index.html', [[/LibreChat/g, NAME]]);
   replaceIn('api/server/routes/config.js', [
     [/process\.env\.APP_TITLE\s*\|\|\s*'LibreChat'/g, "process.env.APP_TITLE || '" + NAME + "'"],
   ]);
+  // Nom de l'application installée (PWA)
+  replaceIn('client/vite.config.ts', [
+    [/name: 'LibreChat'/g, "name: '" + NAME + "'"],
+    [/short_name: 'LibreChat'/g, "short_name: '" + NAME + "'"],
+  ]);
+  // Textes affichés dans l'interface (anglais et français)
+  ['en', 'fr'].forEach((lang) =>
+    replaceIn('client/src/locales/' + lang + '/translation.json', [[NAME_ONLY, NAME]]),
+  );
 
   // 2. Le logo (si le fichier est dans le dépôt)
   const dir = path.join(root, 'client', 'public', 'assets');
-  const candidates = ['logo.png', 'logo.jpg', 'logo.jpeg'].map((n) => path.join(root, 'branding', n));
-  const logoFile = candidates.find((f) => fs.existsSync(f));
-  if (!logoFile) {
-    warn('branding/logo.png absent : logos non changés');
+  const b64File = path.join(root, 'branding', 'logo-256.png.b64');
+  let logo = null;
+  let logoName = null;
+  if (fs.existsSync(b64File)) {
+    logo = Buffer.from(fs.readFileSync(b64File, 'utf8').replace(/\s+/g, ''), 'base64');
+    logoName = 'logo-256.png.b64';
+  } else {
+    const candidates = ['logo.png', 'logo.jpg', 'logo.jpeg'].map((n) => path.join(root, 'branding', n));
+    const logoFile = candidates.find((f) => fs.existsSync(f));
+    if (logoFile) {
+      logo = fs.readFileSync(logoFile);
+      logoName = path.basename(logoFile);
+    }
+  }
+  if (!logo) {
+    warn('aucun logo dans branding/ : logos non changés');
   } else if (!fs.existsSync(dir)) {
     warn('dossier assets introuvable : logos non changés');
   } else {
-    const logo = fs.readFileSync(logoFile);
     const mime = logo[0] === 0xff && logo[1] === 0xd8 ? 'image/jpeg' : 'image/png';
     const svg =
       '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ' +
@@ -62,7 +84,7 @@ try {
       'maskable-icon.png': logo,
     };
     Object.keys(targets).forEach((name) => fs.writeFileSync(path.join(dir, name), targets[name]));
-    log('logos remplacés (' + path.basename(logoFile) + ', ' + Object.keys(targets).length + ' fichiers)');
+    log('logos remplacés (' + logoName + ', ' + Object.keys(targets).length + ' fichiers)');
   }
 } catch (e) {
   warn('erreur ignorée : ' + e.message);
