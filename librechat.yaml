@@ -48,35 +48,21 @@ endpoints:
       titleConvo: false
       modelDisplayLabel: "Jérémy GPU"
 
-    # Génération de vidéos LTX-2.5 sur Modal (service ltx-2-5).
+    # Génération de vidéos LTX-2.5 sur Modal (service ltx-2-5). Le modèle choisi = la durée
+    # totale : video-12s, video-24s, video-36s, video-48s, video-60s.
     # Mode d'emploi : joindre la photo du personnage (facultatif), écrire une scène par
     # paragraphe (ligne vide entre chaque scène), envoyer. La vidéo est prête en quelques
     # minutes ; le lien apparaît dans la réponse.
-    # La durée se règle avec la barre « Durée de la vidéo » du panneau des paramètres :
-    # elle remplace le paramètre maxTokens, que le serveur lit comme un nombre de secondes.
     # Clé à saisir dans l'interface : la clé du service vidéo (jamais écrite ici : dépôt public).
     # titleConvo désactivé : un titre automatique lancerait une génération vidéo.
     - name: "Vidéo"
       apiKey: "user_provided"
       baseURL: "https://g64203490--ltx-2-5-mcp.us-east.modal.run/v1"
       models:
-        default: ["video"]
+        default: ["video-12s", "video-24s", "video-36s", "video-48s", "video-60s"]
         fetch: false
       titleConvo: false
       modelDisplayLabel: "Vidéo"
-      customParams:
-        defaultParamsEndpoint: "openAI"
-        paramDefinitions:
-          - key: maxTokens
-            label: "Durée de la vidéo (secondes)"
-            description: "Durée totale de la vidéo : 12, 24, 36, 48 ou 60 secondes. Prévoir au moins une scène par tranche de 15 secondes (4 scènes pour 60 s)."
-            type: number
-            component: slider
-            range:
-              min: 12
-              max: 60
-              step: 12
-            default: 60
 
 mcpServers:
   cloudflare:
