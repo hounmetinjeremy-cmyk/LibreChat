@@ -16,7 +16,7 @@ endpoints:
     # DeepSeek passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
     # sont d'abord lus par Gemini, puis le texte est transmis à DeepSeek.
     # Clé à saisir dans l'interface : clé_deepseek,clé_gemini (séparées par une virgule).
-    # Noms affichés : « Éclair » (rapide, économique) et « Lumière » (le grand modèle, environ 3 fois plus cher).
+    # Noms affichés : « Aube » (rapide, économique) et « Soleil » (le grand modèle, environ 3 fois plus cher).
     # vision-bridge les traduit vers les vrais modèles. titleConvo désactivé : chaque titre
     # automatique était un appel API supplémentaire avec le modèle courant.
     # Le nombre de messages d'historique est limité par patch-history-limit.js
@@ -27,7 +27,7 @@ endpoints:
       apiKey: "user_provided"
       baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
       models:
-        default: ["Éclair", "Lumière"]
+        default: ["Aube", "Soleil"]
         fetch: false
       titleConvo: false
       addParams:
@@ -48,22 +48,6 @@ endpoints:
       titleConvo: false
       modelDisplayLabel: "Jérémy GPU"
 
-    # Génération de vidéos LTX-2.5 sur Modal (service ltx-2-5). Le modèle choisi = la durée
-    # totale : video-12s, video-24s, video-36s, video-48s, video-60s.
-    # Mode d'emploi : joindre la photo du personnage (facultatif), écrire une scène par
-    # paragraphe (ligne vide entre chaque scène), envoyer. La vidéo est prête en quelques
-    # minutes ; le lien apparaît dans la réponse.
-    # Clé à saisir dans l'interface : la clé du service vidéo (jamais écrite ici : dépôt public).
-    # titleConvo désactivé : un titre automatique lancerait une génération vidéo.
-    - name: "Vidéo"
-      apiKey: "user_provided"
-      baseURL: "https://g64203490--ltx-2-5-mcp.us-east.modal.run/v1"
-      models:
-        default: ["video-12s", "video-24s", "video-36s", "video-48s", "video-60s"]
-        fetch: false
-      titleConvo: false
-      modelDisplayLabel: "Vidéo"
-
 mcpServers:
   cloudflare:
     type: streamable-http
@@ -77,4 +61,13 @@ mcpServers:
     type: streamable-http
     url: https://github-mcp-lite.hounmetinjeremy.workers.dev
     requiresOAuth: true
+    timeout: 60000
+
+  # Génération de vidéos LTX-2.5 sur Modal (2 outils très courts : creer_video, etat_video).
+  # La clé n'est PAS écrite ici (dépôt public) : elle vient du secret Fly LTX_API_KEY.
+  video:
+    type: streamable-http
+    url: https://g64203490--ltx-2-5-mcp.us-east.modal.run/mcp
+    headers:
+      Authorization: "Bearer ${LTX_API_KEY}"
     timeout: 60000
