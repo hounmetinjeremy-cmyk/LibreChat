@@ -13,8 +13,8 @@ endpoints:
     maxRecursionLimit: 12
 
   custom:
-    # DeepSeek passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
-    # sont d'abord lus par Gemini, puis le texte est transmis à DeepSeek.
+    # Le modèle derrière passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
+    # sont d'abord lus par Gemini, puis le texte est transmis au modèle.
     # Clé à saisir dans l'interface : clé_deepseek,clé_gemini (séparées par une virgule).
     # Noms affichés : « Aube » (rapide, économique) et « Soleil » (le grand modèle, environ 3 fois plus cher).
     # vision-bridge les traduit vers les vrais modèles. titleConvo désactivé : chaque titre
@@ -23,8 +23,9 @@ endpoints:
     # (variable MAX_HISTORY_MESSAGES). Max Context Tokens : à régler dans l'interface
     # (3000 sans outil, 6000 avec des serveurs MCP légers).
     # Température basse : moins de réponses inventées.
-    # iconURL : ton logo (écrit dans /assets/logo.svg par patch-branding.js) à la place de l'icône par défaut.
-    - name: "DeepSeek"
+    # name : c'est le nom affiché dans le sélecteur de modèles (plus de « DeepSeek » visible).
+    # iconURL : ton logo (écrit dans /assets/jeremy-logo.svg par patch-branding.js).
+    - name: "Jérémy"
       apiKey: "user_provided"
       baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
       models:
@@ -34,14 +35,14 @@ endpoints:
       addParams:
         temperature: 0.2
       modelDisplayLabel: "Jérémy"
-      iconURL: "/assets/logo.svg"
+      iconURL: "/assets/jeremy-logo.svg"
 
-    # DeepSeek R1 (14B) hébergé sur un GPU Modal (service deepseek-api).
+    # Modèle R1 (14B) hébergé sur un GPU Modal (service deepseek-api).
     # Texte uniquement. Le GPU s'éteint après 5 min d'inactivité : le premier
     # message après une pause peut prendre environ 3 minutes (démarrage à froid).
     # Clé à saisir dans l'interface : la clé API du service Modal.
     # titleConvo désactivé : un titre automatique réveillait le GPU pour rien.
-    - name: "DeepSeek GPU"
+    - name: "Jérémy GPU"
       apiKey: "user_provided"
       baseURL: "https://g64203490--deepseek-api-serve.us-east.modal.run/v1"
       models:
@@ -49,7 +50,7 @@ endpoints:
         fetch: false
       titleConvo: false
       modelDisplayLabel: "Jérémy GPU"
-      iconURL: "/assets/logo.svg"
+      iconURL: "/assets/jeremy-logo.svg"
 
     # Génération de vidéos LTX-2.5 sur Modal (service ltx-2-5). Le modèle choisi = la durée
     # totale : video-12s, video-24s, video-36s, video-48s, video-60s.
@@ -66,7 +67,7 @@ endpoints:
         fetch: false
       titleConvo: false
       modelDisplayLabel: "Vidéo"
-      iconURL: "/assets/logo.svg"
+      iconURL: "/assets/jeremy-logo.svg"
 
 mcpServers:
   cloudflare:
