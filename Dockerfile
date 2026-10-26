@@ -65,6 +65,9 @@ RUN node patch-agent-prompt.js
 # Ajoute le bouton « Résumé » sous les réponses avec outils (voir patch-resume-sheet.js)
 RUN node patch-resume-sheet.js
 
+# Met le nom « Jérémy » dans le code et remplace les logos (voir patch-branding.js)
+RUN node patch-branding.js
+
 RUN \
     # React client build with configurable memory
     NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}" npm run frontend; \
