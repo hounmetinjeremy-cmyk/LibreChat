@@ -23,6 +23,7 @@ endpoints:
     # (variable MAX_HISTORY_MESSAGES). Max Context Tokens : à régler dans l'interface
     # (3000 sans outil, 6000 avec des serveurs MCP légers).
     # Température basse : moins de réponses inventées.
+    # iconURL : ton logo (écrit dans /assets/logo.svg par patch-branding.js) à la place de l'icône par défaut.
     - name: "DeepSeek"
       apiKey: "user_provided"
       baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
@@ -33,6 +34,7 @@ endpoints:
       addParams:
         temperature: 0.2
       modelDisplayLabel: "Jérémy"
+      iconURL: "/assets/logo.svg"
 
     # DeepSeek R1 (14B) hébergé sur un GPU Modal (service deepseek-api).
     # Texte uniquement. Le GPU s'éteint après 5 min d'inactivité : le premier
@@ -47,6 +49,7 @@ endpoints:
         fetch: false
       titleConvo: false
       modelDisplayLabel: "Jérémy GPU"
+      iconURL: "/assets/logo.svg"
 
     # Génération de vidéos LTX-2.5 sur Modal (service ltx-2-5). Le modèle choisi = la durée
     # totale : video-12s, video-24s, video-36s, video-48s, video-60s.
@@ -63,6 +66,7 @@ endpoints:
         fetch: false
       titleConvo: false
       modelDisplayLabel: "Vidéo"
+      iconURL: "/assets/logo.svg"
 
 mcpServers:
   cloudflare:
