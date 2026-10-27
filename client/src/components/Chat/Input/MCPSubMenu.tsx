@@ -187,6 +187,7 @@ const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
           <MCPServerToolsDialog
             displayName={detailsDefinition.config?.title || detailsDefinition.serverName}
             tools={serversTools?.[detailsDefinition.serverName]?.tools ?? []}
+            serverName={detailsDefinition.serverName}
             onClose={() => setDetailsServer(null)}
           />
         )}
