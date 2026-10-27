@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Tools } from 'librechat-data-provider';
 import type { UIResource } from 'librechat-data-provider';
 import type * as t from './types';
+import { compactToolText } from './resultFilter';
 
 export const DEFAULT_MCP_IMAGE_DATA_MAX_BYTES: number = 10 * 1024 * 1024;
 
@@ -179,7 +180,7 @@ function parseAsString(result: t.MCPToolCallResponse): string {
   const text = content
     .map((item) => {
       if (item.type === 'text') {
-        return item.text;
+        return compactToolText(item.text);
       }
       if (item.type === 'resource_link') {
         return describeResourceLink(item).join('\n');
@@ -258,7 +259,7 @@ export function formatToolContent(
     resource_link: (item: t.ResourceLink) => void;
   } = {
     text: (item) => {
-      currentTextBlock += (currentTextBlock ? '\n\n' : '') + item.text;
+      currentTextBlock += (currentTextBlock ? '\n\n' : '') + compactToolText(item.text);
     },
 
     image: (item) => {
