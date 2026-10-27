@@ -3,8 +3,10 @@ import * as Ariakit from '@ariakit/react';
 import { ChevronRight, Plus } from 'lucide-react';
 import { MCPIcon, PinIcon } from '@librechat/client';
 import MCPServerMenuItem from '~/components/MCP/MCPServerMenuItem';
+import MCPServerToolsDialog from '~/components/MCP/MCPServerToolsDialog';
 import MCPConfigDialog from '~/components/MCP/MCPConfigDialog';
 import AddCustomMCPServerDialog from '~/components/MCP/AddCustomMCPServerDialog';
+import { useMCPToolsQuery } from '~/data-provider';
 import { useMCPRefresh } from '~/hooks/MCP/useMCPRefresh';
 import { useBadgeRowContext } from '~/Providers';
 import { useLocalize } from '~/hooks';
@@ -13,6 +15,11 @@ import { cn } from '~/utils';
 interface MCPSubMenuProps extends React.HTMLAttributes<HTMLButtonElement> {
   placeholder?: string;
 }
+
+type ServerToolsEntry = {
+  icon?: string;
+  tools?: Array<{ name: string; pluginKey?: string; description?: string }>;
+};
 
 const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
   ({ placeholder, className, ...props }, ref) => {
@@ -29,11 +36,40 @@ const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
     const isOpen = menuStore.useState('open');
     const configDialogOpen = mcpServerManager?.getConfigDialogProps()?.isOpen === true;
     const [isAddCustomOpen, setIsAddCustomOpen] = React.useState(false);
+    const [detailsServer, setDetailsServer] = React.useState<string | null>(null);
+    const autoSelected = React.useRef<Set<string>>(new Set());
+
+    const { data: toolsData } = useMCPToolsQuery();
+    const serversTools = (toolsData as { servers?: Record<string, ServerToolsEntry> } | undefined)
+      ?.servers;
 
     useMCPRefresh({
       enabled:
         (isOpen || configDialogOpen) && (mcpServerManager?.selectableServers.length ?? 0) > 0,
     });
+
+    /**
+     * Un serveur connecté reste actif : plus besoin de le cocher.
+     * Chaque serveur n'est sélectionné automatiquement qu'une seule fois
+     * (le ref évite que toggleServerSelection ne le désélectionne ensuite).
+     */
+    React.useEffect(() => {
+      if (!mcpServerManager) {
+        return;
+      }
+      const selected = mcpServerManager.mcpValues ?? [];
+      for (const server of mcpServerManager.selectableServers) {
+        const state = mcpServerManager.connectionStatus?.[server.serverName]?.connectionState;
+        if (
+          state === 'connected' &&
+          !selected.includes(server.serverName) &&
+          !autoSelected.current.has(server.serverName)
+        ) {
+          autoSelected.current.add(server.serverName);
+          mcpServerManager.toggleServerSelection(server.serverName);
+        }
+      }
+    }, [mcpServerManager]);
 
     if (!mcpServerManager) {
       return null;
@@ -41,18 +77,16 @@ const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
 
     const {
       isPinned,
-      mcpValues,
       setIsPinned,
-      isInitializing,
       placeholderText,
       connectionStatus,
       selectableServers,
       getConfigDialogProps,
-      toggleServerSelection,
       getServerStatusIconProps,
     } = mcpServerManager;
 
     const configDialogProps = getConfigDialogProps();
+    const detailsDefinition = selectableServers.find((s) => s.serverName === detailsServer);
 
     return (
       <>
@@ -109,11 +143,14 @@ const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
                 <MCPServerMenuItem
                   key={server.serverName}
                   server={server}
-                  isSelected={mcpValues?.includes(server.serverName) ?? false}
                   connectionStatus={connectionStatus}
-                  isInitializing={isInitializing}
                   statusIconProps={getServerStatusIconProps(server.serverName)}
-                  onToggle={toggleServerSelection}
+                  toolCount={serversTools?.[server.serverName]?.tools?.length}
+                  iconUrl={serversTools?.[server.serverName]?.icon}
+                  onOpen={(name) => {
+                    menuStore.hide();
+                    setDetailsServer(name);
+                  }}
                 />
               ))}
             </div>
@@ -145,10 +182,14 @@ const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
         {configDialogProps && (
           <MCPConfigDialog {...configDialogProps} storageContextKey={storageContextKey} />
         )}
-        <AddCustomMCPServerDialog
-          isOpen={isAddCustomOpen}
-          onOpenChange={setIsAddCustomOpen}
-        />
+        <AddCustomMCPServerDialog isOpen={isAddCustomOpen} onOpenChange={setIsAddCustomOpen} />
+        {detailsDefinition && (
+          <MCPServerToolsDialog
+            displayName={detailsDefinition.config?.title || detailsDefinition.serverName}
+            tools={serversTools?.[detailsDefinition.serverName]?.tools ?? []}
+            onClose={() => setDetailsServer(null)}
+          />
+        )}
       </>
     );
   },
