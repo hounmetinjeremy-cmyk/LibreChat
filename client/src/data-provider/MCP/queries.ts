@@ -1,16 +1,18 @@
 import { QueryKeys, dataService } from 'librechat-data-provider';
 import { useQuery, UseQueryOptions, QueryObserverResult } from '@tanstack/react-query';
 import type * as t from 'librechat-data-provider';
+import { withMCPIcons } from '~/utils/mcpIcons';
 
 /**
- * Hook for fetching all accessible MCP servers with permission metadata
+ * Hook for fetching all accessible MCP servers with permission metadata.
+ * Les logos manquants sont détectés automatiquement (voir utils/mcpIcons.ts).
  */
 export const useMCPServersQuery = <TData = t.MCPServersListResponse>(
   config?: UseQueryOptions<t.MCPServersListResponse, unknown, TData>,
 ): QueryObserverResult<TData> => {
   return useQuery<t.MCPServersListResponse, unknown, TData>(
     [QueryKeys.mcpServers],
-    () => dataService.getMCPServers(),
+    async () => withMCPIcons(await dataService.getMCPServers()),
     {
       staleTime: 30 * 1000, // 30 seconds — short enough to pick up servers that finish initializing after first load
       refetchOnWindowFocus: true,
