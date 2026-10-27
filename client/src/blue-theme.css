@@ -22,3 +22,25 @@ html.dark {
 .border-green-600 {
   border-color: #2563eb !important;
 }
+
+/* Tiroir mobile à la manière de Claude : fond beige en mode clair. */
+html:not(.dark) div:has(> #chat-history-nav),
+html:not(.dark) #chat-history-nav {
+  background-color: #f5f4ef !important;
+}
+
+/* Le grand titre du tiroir glisse et disparaît quand on défile (voir drawer-scroll.js). */
+div:has(+ #chat-history-nav) > h1 {
+  max-height: 5rem;
+  overflow: hidden;
+  transition:
+    max-height 0.2s ease,
+    opacity 0.2s ease,
+    padding 0.2s ease;
+}
+
+div:has(+ #chat-history-nav) > h1.lc-title-collapsed {
+  max-height: 0;
+  opacity: 0;
+  padding-bottom: 0 !important;
+}
