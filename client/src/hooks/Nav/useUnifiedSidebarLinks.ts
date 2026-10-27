@@ -1,15 +1,20 @@
 import { useMemo } from 'react';
 import { useRecoilValue } from 'recoil';
-import { BarChart3, MessagesSquare } from 'lucide-react';
+import { BarChart3, Folder, MessagesSquare, ScrollText } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useUserKeyQuery } from 'librechat-data-provider/react-query';
-import { getConfigDefaults, getEndpointField } from 'librechat-data-provider';
+import {
+  getConfigDefaults,
+  getEndpointField,
+  PermissionTypes,
+  Permissions,
+} from 'librechat-data-provider';
 import type { TEndpointsConfig } from 'librechat-data-provider';
 import type { NavLink } from '~/common';
 import { useGetEndpointsQuery, useGetStartupConfig, useInsightsAccessQuery } from '~/data-provider';
 import ConversationsSection from '~/components/UnifiedSidebar/ConversationsSection';
 import useSideNavLinks from '~/hooks/Nav/useSideNavLinks';
-import { useAuthContext } from '~/hooks';
+import { useAuthContext, useHasAccess } from '~/hooks';
 import store from '~/store';
 
 const defaultInterface = getConfigDefaults().interface;
@@ -54,6 +59,11 @@ export default function useUnifiedSidebarLinks() {
     [keyExpiry.expiresAt, userProvidesKey],
   );
 
+  const hasAccessToSkills = useHasAccess({
+    permissionType: PermissionTypes.SKILLS,
+    permission: Permissions.USE,
+  });
+
   const sideNavLinks = useSideNavLinks({
     keyProvided,
     endpoint,
@@ -72,11 +82,44 @@ export default function useUnifiedSidebarLinks() {
       Component: ConversationsSection,
     };
 
+    /** Entrées visibles pour tous les utilisateurs (comme sur Claude). */
+    const projectsLink: NavLink = {
+      title: 'com_ui_projects',
+      label: '',
+      icon: Folder,
+      id: 'projects',
+      onClick: () => {
+        if (!location.pathname.startsWith('/projects')) {
+          navigate('/projects');
+        }
+      },
+    };
+    const skillsLink: NavLink = {
+      title: 'com_ui_skills',
+      label: '',
+      icon: ScrollText,
+      id: 'skills',
+      onClick: () => {
+        if (!location.pathname.startsWith('/skills')) {
+          navigate('/skills');
+        }
+      },
+    };
+    const hasSkillsLink = sideNavLinks.some((link) => link.id === 'skills');
+    const hasProjectsLink = sideNavLinks.some((link) => link.id === 'projects');
+    const clientLinks: NavLink[] = [];
+    if (!hasProjectsLink) {
+      clientLinks.push(projectsLink);
+    }
+    if (!hasSkillsLink && hasAccessToSkills) {
+      clientLinks.push(skillsLink);
+    }
+
     if (
       !insightsFeatureEnabled ||
       (!isInsightsRoute && !isInsightsAccessLoading && insightsAccess?.access !== true)
     ) {
-      return [conversationLink, ...sideNavLinks];
+      return [conversationLink, ...clientLinks, ...sideNavLinks];
     }
 
     const insightsLink: NavLink = {
@@ -95,7 +138,7 @@ export default function useUnifiedSidebarLinks() {
     const nextLinks = [...sideNavLinks];
     nextLinks.splice(mcpIndex >= 0 ? mcpIndex + 1 : nextLinks.length, 0, insightsLink);
 
-    return [conversationLink, ...nextLinks];
+    return [conversationLink, ...clientLinks, ...nextLinks];
   }, [
     insightsAccess?.access,
     insightsFeatureEnabled,
@@ -104,6 +147,7 @@ export default function useUnifiedSidebarLinks() {
     location.pathname,
     navigate,
     sideNavLinks,
+    hasAccessToSkills,
   ]);
 
   return links;
