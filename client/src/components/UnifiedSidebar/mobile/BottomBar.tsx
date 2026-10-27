@@ -10,6 +10,7 @@ import useNewChat from '~/hooks/Chat/useNewChat';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 import store from '~/store';
+import AllConversations from './AllConversations';
 
 const AccountSettings = lazy(() => import('~/components/Nav/AccountSettings'));
 
@@ -62,38 +63,43 @@ function BottomBar({
 
   /** Searching messages only means anything from the conversation list. */
   const showSearch = search.enabled === true && resolveActivePanel(active, links) === DEFAULT_PANEL;
+  /** Lien « Toutes les conversations » : seulement sur le panneau des conversations. */
+  const showAll = resolveActivePanel(active, links) === DEFAULT_PANEL;
 
   return (
-    <div
-      className="flex flex-shrink-0 items-center gap-3 px-4 pt-2"
-      style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
-    >
-      <div className="flex-shrink-0" data-testid="drawer-account">
-        <Suspense fallback={<Skeleton className="size-[52px] rounded-full" />}>
-          <AccountSettings collapsed />
-        </Suspense>
-      </div>
-      {showSearch && (
-        <div className="min-w-0 flex-1">
-          <SearchBar isSmallScreen={true} />
-        </div>
-      )}
-      <Button
-        asChild
-        className={cn('h-[52px] gap-2 rounded-full', showSearch ? 'flex-shrink-0 px-5' : 'min-w-0 flex-1')}
+    <>
+      {showAll && <AllConversations />}
+      <div
+        className="flex flex-shrink-0 items-center gap-3 px-4 pt-2"
+        style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
       >
-        <a
-          href="/c/new"
-          data-testid="nav-new-chat-fab"
-          aria-label={localize('com_ui_new_chat')}
-          aria-keyshortcuts={newChatAriaKey}
-          onClick={handleNewChatClick}
+        <div className="flex-shrink-0" data-testid="drawer-account">
+          <Suspense fallback={<Skeleton className="size-[52px] rounded-full" />}>
+            <AccountSettings collapsed />
+          </Suspense>
+        </div>
+        {showSearch && (
+          <div className="min-w-0 flex-1">
+            <SearchBar isSmallScreen={true} />
+          </div>
+        )}
+        <Button
+          asChild
+          className={cn('h-[52px] gap-2 rounded-full', showSearch ? 'flex-shrink-0 px-5' : 'min-w-0 flex-1')}
         >
-          <Plus className="size-5" aria-hidden="true" />
-          <span className="truncate text-base font-medium">{localize('com_ui_new_chat')}</span>
-        </a>
-      </Button>
-    </div>
+          <a
+            href="/c/new"
+            data-testid="nav-new-chat-fab"
+            aria-label={localize('com_ui_new_chat')}
+            aria-keyshortcuts={newChatAriaKey}
+            onClick={handleNewChatClick}
+          >
+            <Plus className="size-5" aria-hidden="true" />
+            <span className="truncate text-base font-medium">{localize('com_ui_new_chat')}</span>
+          </a>
+        </Button>
+      </div>
+    </>
   );
 }
 
