@@ -17,8 +17,8 @@ endpoints:
     # sont d'abord lus par Gemini, puis le texte est transmis au modèle.
     # Clé à saisir dans l'interface : clé_deepseek,clé_gemini (séparées par une virgule).
     # Noms affichés : « Aube » (rapide, économique) et « Soleil » (le grand modèle, environ 3 fois plus cher).
-    # vision-bridge les traduit vers les vrais modèles. titleConvo désactivé : chaque titre
-    # automatique était un appel API supplémentaire avec le modèle courant.
+    # vision-bridge les traduit vers les vrais modèles. titleConvo activé ici seulement (titres
+    # réels dans l'historique, un petit appel supplémentaire avec le modèle courant, le moins cher).
     # Le nombre de messages d'historique est limité par patch-history-limit.js
     # (variable MAX_HISTORY_MESSAGES). Max Context Tokens : à régler dans l'interface
     # (3000 sans outil, 6000 avec des serveurs MCP légers).
@@ -31,7 +31,8 @@ endpoints:
       models:
         default: ["Aube", "Soleil"]
         fetch: false
-      titleConvo: false
+      titleConvo: true
+      titleModel: "current_model"
       addParams:
         temperature: 0.2
       modelDisplayLabel: "Jérémy"
