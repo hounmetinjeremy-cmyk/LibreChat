@@ -44,3 +44,12 @@ div:has(+ #chat-history-nav) > h1.lc-title-collapsed {
   opacity: 0;
   padding-bottom: 0 !important;
 }
+
+/*
+ * Comme dans Claude : la liste du tiroir ne défile pas. Elle montre seulement les
+ * conversations les plus récentes, en haut. Pour tout parcourir, on passe par le lien
+ * « Toutes les conversations » (page avec barre de recherche).
+ */
+#chat-history-nav .scrollbar-gutter-stable {
+  overflow-y: hidden !important;
+}
