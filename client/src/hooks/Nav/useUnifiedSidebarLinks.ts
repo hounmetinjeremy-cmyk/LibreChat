@@ -8,6 +8,7 @@ import {
   getEndpointField,
   PermissionTypes,
   Permissions,
+  SystemRoles,
 } from 'librechat-data-provider';
 import type { TEndpointsConfig } from 'librechat-data-provider';
 import type { NavLink } from '~/common';
@@ -18,6 +19,9 @@ import { useAuthContext, useHasAccess } from '~/hooks';
 import store from '~/store';
 
 const defaultInterface = getConfigDefaults().interface;
+
+/** Entrées réservées au rôle ADMIN : masquées pour les clients. */
+const CLIENT_HIDDEN_IDS = ['bookmarks', 'files'];
 
 export default function useUnifiedSidebarLinks() {
   const navigate = useNavigate();
@@ -73,7 +77,7 @@ export default function useUnifiedSidebarLinks() {
     includeHidePanel: false,
   });
 
-  const links = useMemo(() => {
+  const allLinks = useMemo(() => {
     const conversationLink: NavLink = {
       title: 'com_ui_chat_history',
       label: '',
@@ -149,6 +153,13 @@ export default function useUnifiedSidebarLinks() {
     sideNavLinks,
     hasAccessToSkills,
   ]);
+
+  const isAdminUser = user?.role === SystemRoles.ADMIN;
+  const links = useMemo(
+    () =>
+      isAdminUser ? allLinks : allLinks.filter((link) => !CLIENT_HIDDEN_IDS.includes(link.id)),
+    [allLinks, isAdminUser],
+  );
 
   return links;
 }
