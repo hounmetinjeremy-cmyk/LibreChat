@@ -6,6 +6,7 @@ import '@librechat/client/style.css';
 import './style.css';
 import './mobile.css';
 import './blue-theme.css';
+import './claude-sidebar.css';
 import './drawer-scroll.js';
 import { ApiErrorBoundaryProvider } from './hooks/ApiErrorBoundaryContext';
 import 'katex/dist/katex.min.css';

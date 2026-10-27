@@ -1,0 +1,27 @@
+/* Menu latéral façon Claude : pas de contour noir sur l'élément sélectionné. */
+#mobile-drawer *,
+#mobile-drawer *:focus,
+#mobile-drawer *:focus-visible,
+#mobile-drawer *:active,
+#mobile-drawer [aria-current='page'],
+#mobile-drawer [aria-selected='true'],
+#mobile-drawer [data-active-item] {
+  outline: none !important;
+  outline-offset: 0 !important;
+  box-shadow: none !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  --tw-ring-offset-shadow: 0 0 #0000 !important;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Idem pour la barre latérale sur ordinateur. */
+nav[aria-label] a:focus,
+nav[aria-label] a:focus-visible,
+nav[aria-label] button:focus,
+nav[aria-label] button:focus-visible,
+nav[aria-label] [role='button']:focus,
+nav[aria-label] [role='button']:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+}
