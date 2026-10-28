@@ -30,8 +30,10 @@ import {
   useHasAccess,
   useAgentCapabilities,
 } from '~/hooks';
+import { useMCPToolsQuery } from '~/data-provider';
 import { useMCPRefresh } from '~/hooks/MCP/useMCPRefresh';
 import MCPConfigDialog from '~/components/MCP/MCPConfigDialog';
+import MCPServerToolsDialog from '~/components/MCP/MCPServerToolsDialog';
 import AddCustomMCPServerDialog from '~/components/MCP/AddCustomMCPServerDialog';
 import { shouldShowActionButton } from '~/components/MCP/mcpServerUtils';
 import CustomIcon from '~/components/ui/CustomIcon';
@@ -43,6 +45,10 @@ interface ToolsDropdownProps {
 }
 
 type MenuView = 'root' | 'artifacts' | 'mcp';
+
+type ServerToolsEntry = {
+  tools?: Array<{ name: string; pluginKey?: string; description?: string }>;
+};
 
 /** Ouvre le menu d'envoi de fichiers existant (trombone), sans le dupliquer. */
 const openExistingAttachMenu = () => {
@@ -168,7 +174,12 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const [view, setView] = useState<MenuView>('root');
   const [isAddCustomOpen, setIsAddCustomOpen] = useState(false);
   const [isConnectorsMenuOpen, setIsConnectorsMenuOpen] = useState(false);
+  const [toolsDialogServer, setToolsDialogServer] = useState<string | null>(null);
   const isDisabled = disabled ?? false;
+
+  const { data: toolsData } = useMCPToolsQuery();
+  const serversTools = (toolsData as { servers?: Record<string, ServerToolsEntry> } | undefined)
+    ?.servers;
 
   const {
     skills,
@@ -187,6 +198,27 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const { authData: webSearchAuthData } = webSearch ?? {};
 
   const selectableServers = mcpServerManager?.selectableServers ?? [];
+
+  /** Un connecteur connecté reste actif : plus d'interrupteur à activer.
+   *  Chaque serveur est sélectionné automatiquement une seule fois. */
+  const autoSelectedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!mcpServerManager) {
+      return;
+    }
+    const selected = mcpServerManager.mcpValues ?? [];
+    for (const server of mcpServerManager.selectableServers) {
+      const state = mcpServerManager.connectionStatus?.[server.serverName]?.connectionState;
+      if (
+        state === 'connected' &&
+        !selected.includes(server.serverName) &&
+        !autoSelectedRef.current.has(server.serverName)
+      ) {
+        autoSelectedRef.current.add(server.serverName);
+        mcpServerManager.toggleServerSelection(server.serverName);
+      }
+    }
+  }, [mcpServerManager]);
 
   /** Exécution de code : activée automatiquement, comme dans Claude, sans ligne dans le menu.
    *  Une seule fois par montage, pour ne pas boucler si la valeur ne se met pas à jour tout de suite. */
@@ -466,7 +498,8 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   /** Une ligne par serveur MCP (ajouté dans l'interface admin, en configuration, ou par
    *  l'utilisateur) : son logo, son nom, et un bouton « Connecter » tant que le compte de
-   *  l'utilisateur n'est pas relié au serveur. */
+   *  l'utilisateur n'est pas relié au serveur. Une fois connecté, le nombre d'outils
+   *  s'affiche : un appui ouvre la liste des outils et le bouton Déconnecter. */
   const renderMcpServer = (server: (typeof selectableServers)[number]) => {
     if (!mcpServerManager) {
       return null;
@@ -485,7 +518,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
       (connectionState === 'disconnected' || connectionState === 'error');
     const hasCustomVars = statusIconProps?.hasCustomUserVars === true;
     const connectedWithVars = connectionState === 'connected' && hasCustomVars;
-    const checked = mcpServerManager.mcpValues?.includes(name) ?? false;
+    const toolCount = serversTools?.[name]?.tools?.length ?? 0;
     const serverUrl = (server.config as { url?: string } | undefined)?.url;
 
     /** « Connecter » : lance directement l'autorisation du compte (page d'accueil du serveur),
@@ -553,12 +586,11 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
             )}
             <button
               type="button"
-              role="switch"
-              aria-checked={checked}
-              aria-label={displayName}
-              onClick={() => mcpServerManager.toggleServerSelection(name)}
+              onClick={() => setToolsDialogServer(name)}
+              aria-label={`${displayName}: ${toolCount}`}
+              className="shrink-0 rounded-full bg-blue-100 px-3 py-1 text-sm font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
             >
-              <ToggleSwitch checked={checked} />
+              {toolCount}
             </button>
           </>
         )}
@@ -629,6 +661,8 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   const title =
     view === 'artifacts' ? 'Artefacts' : view === 'mcp' ? 'Connecteurs' : 'Ajouter à la conversation';
+
+  const toolsDialogDefinition = selectableServers.find((s) => s.serverName === toolsDialogServer);
 
   return (
     <>
@@ -722,6 +756,22 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
               </div>
             </div>
           </div>,
+          document.body,
+        )}
+      {/* Liste des outils d'un connecteur + bouton Déconnecter : montée hors de la feuille. */}
+      {toolsDialogDefinition &&
+        createPortal(
+          <MCPServerToolsDialog
+            displayName={toolsDialogDefinition.config?.title || toolsDialogDefinition.serverName}
+            tools={serversTools?.[toolsDialogDefinition.serverName]?.tools ?? []}
+            serverName={toolsDialogDefinition.serverName}
+            onDisconnected={() => {
+              if (mcpServerManager?.mcpValues?.includes(toolsDialogDefinition.serverName)) {
+                mcpServerManager.toggleServerSelection(toolsDialogDefinition.serverName);
+              }
+            }}
+            onClose={() => setToolsDialogServer(null)}
+          />,
           document.body,
         )}
       {/* Fenêtres de connexion et d'ajout : montées hors de la feuille pour rester

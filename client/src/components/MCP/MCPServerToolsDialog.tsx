@@ -14,6 +14,8 @@ interface MCPServerToolsDialogProps {
   tools: MCPToolInfo[];
   /** Nom technique du serveur : nécessaire pour afficher le bouton Déconnecter */
   serverName?: string;
+  /** Appelé après une déconnexion réussie (avant la fermeture) */
+  onDisconnected?: () => void;
   onClose: () => void;
 }
 
@@ -21,11 +23,13 @@ export default function MCPServerToolsDialog({
   displayName,
   tools,
   serverName,
+  onDisconnected,
   onClose,
 }: MCPServerToolsDialogProps) {
   const queryClient = useQueryClient();
   const disconnectMutation = useUpdateUserPluginsMutation({
     onSuccess: async () => {
+      onDisconnected?.();
       await Promise.all([
         queryClient.invalidateQueries([QueryKeys.mcpServers]),
         queryClient.invalidateQueries([QueryKeys.mcpTools]),
@@ -52,7 +56,7 @@ export default function MCPServerToolsDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 sm:items-center"
+      className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50 sm:items-center"
       onClick={onClose}
       role="presentation"
     >
