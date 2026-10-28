@@ -2,6 +2,8 @@
  * Branche la page admin « /admin-config » et le chargement des clés dans api/server/index.js.
  * Si une ancre est introuvable, le build échoue volontairement (l'ancienne version reste en ligne).
  */
+require('./patch-google-link.js');
+
 const fs = require('fs');
 
 const file = 'api/server/index.js';
