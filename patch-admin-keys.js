@@ -3,6 +3,7 @@
  * Si une ancre est introuvable, le build échoue volontairement (l'ancienne version reste en ligne).
  */
 require('./patch-google-link.js');
+require('./patch-identity.js');
 
 const fs = require('fs');
 

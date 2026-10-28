@@ -7,34 +7,27 @@
 const fs = require('fs');
 
 const file = 'api/strategies/socialLogin.js';
-let src = fs.readFileSync(file, 'utf8');
+const src = fs.readFileSync(file, 'utf8');
+const anchor = 'if (existingUser?.provider === provider) {';
 
 if (src.includes('GOOGLE_LINK_PATCH')) {
   console.log('patch-google-link : déjà appliqué');
-  process.exit(0);
-}
-
-const anchor = 'if (existingUser?.provider === provider) {';
-
-if (!src.includes(anchor)) {
+} else if (!src.includes(anchor)) {
   console.error('patch-google-link : ancre introuvable dans ' + file);
   process.exit(1);
+} else {
+  const addition = [
+    '// GOOGLE_LINK_PATCH : relie un ancien compte local au compte Google (email vérifié)',
+    "if (existingUser && existingUser.provider === 'local' && provider === 'google' && emailVerified) {",
+    '  if (id && !existingUser[providerKey]) {',
+    '    await updateUser(existingUser._id, { [providerKey]: id });',
+    '  }',
+    '  await handleExistingUser(existingUser, avatarUrl, appConfig, email);',
+    '  return passResult(existingUser);',
+    '}',
+    '',
+    '      ' + anchor,
+  ].join('\n      ');
+  fs.writeFileSync(file, src.replace(anchor, () => addition));
+  console.log('patch-google-link : appliqué');
 }
-
-const addition = [
-  '// GOOGLE_LINK_PATCH : relie un ancien compte local au compte Google (email vérifié)',
-  "if (existingUser && existingUser.provider === 'local' && provider === 'google' && emailVerified) {",
-  '  if (id && !existingUser[providerKey]) {',
-  '    await updateUser(existingUser._id, { [providerKey]: id });',
-  '  }',
-  '  await handleExistingUser(existingUser, avatarUrl, appConfig, email);',
-  '  return passResult(existingUser);',
-  '}',
-  '',
-  '      ' + anchor,
-].join('\n      ');
-
-src = src.replace(anchor, () => addition);
-
-fs.writeFileSync(file, src);
-console.log('patch-google-link : appliqué');
