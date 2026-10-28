@@ -24,7 +24,7 @@ echo "MCP_SECRET=$(openssl rand -hex 24)"
 Copie ces lignes dans `.env` (commande : `nano .env`), puis remplis aussi :
 - `DOMAIN_CLIENT` et `DOMAIN_SERVER` avec l'adresse de la VM
 - `VISION_KEYS` : `clé_deepseek,clé_gemini` (tes clés, séparées par une virgule : elles paient les tokens de l'abonnement)
-- `DEEPSEEK_API_KEY` : ta clé DeepSeek (pour les corrections de code)
+- `DEEPSEEK_API_KEY` : ta clé DeepSeek (pour l'agent de code)
 
 ## 3. Lancer
 
@@ -39,7 +39,7 @@ L'outil `dev-fix` est déjà branché dans `librechat.gce.yaml`.
 
 - **80 messages par jour** (`MESSAGE_USER_MAX` dans `.env`).
 - **2 $ de tokens de chat par mois** (section `balance` de `librechat.gce.yaml`).
-- **1 $ de tokens pour les corrections de code par mois** (`FIX_BUDGET_USD` dans `.env`).
+- **1 $ de tokens pour l'agent de code par mois** (`FIX_BUDGET_USD` dans `.env`).
 - Total : 3 $ de tokens par mois, payés avec tes clés.
 
 À vérifier au premier test : envoie un message avec un compte test et regarde de combien baisse le solde. Les modèles « Aube » et « Soleil » ont des noms inventés : si LibreChat ne connaît pas leur prix, il en applique un par défaut, qui peut être trop haut ou trop bas.
@@ -48,15 +48,19 @@ L'outil `dev-fix` est déjà branché dans `librechat.gce.yaml`.
 
 Chaque utilisateur, dans LibreChat, ouvre les réglages de l'outil `dev-fix` et saisit **son propre token GitHub**
 (token à créer sur GitHub : droits « Contents » et « Pull requests » en écriture, sur ses dépôts).
-Ensuite l'outil travaille sur **ses** dépôts, dans **son** espace de travail, séparé des autres.
+Ensuite l'agent travaille sur **ses** dépôts, dans **son** espace de travail, séparé des autres.
 
 ## 6. Utiliser
 
 Écrire dans le chat, par exemple : « Dans mon dépôt Chap-money, j'ai un problème de paiement : ... ».
-L'outil `dev_fix` cherche les fichiers, fait une seule requête au modèle, applique la correction sur une branche et ouvre une pull request. Rien ne touche la branche principale tant que l'utilisateur n'a pas validé la pull request.
-Une correction peut durer 1 à 2 minutes. Le budget restant est indiqué à la fin de chaque réponse de l'outil.
+L'outil `dev_fix` lance un agent qui travaille en boucle sur le serveur : il cherche dans le code, lit les fichiers utiles, modifie, vérifie, recommence, puis ouvre une pull request. Le chat ne l'appelle qu'une fois. Rien ne touche la branche principale tant que l'utilisateur n'a pas validé la pull request.
 
-`MAX_PARALLEL` corrections tournent en même temps sur le serveur (les autres attendent leur tour), une seule à la fois par utilisateur.
+- **Étapes** : 12 au maximum par tâche (`AGENT_MAX_STEPS` dans `.env` pour changer).
+- **Durée** : de quelques dizaines de secondes à plusieurs minutes. La réponse n'arrive qu'à la fin.
+- **Coût** : environ 0,01 à 0,04 $ par tâche. Le budget restant est indiqué à la fin de chaque réponse.
+- **Limites actuelles** : l'agent lit et modifie le code, mais ne lance pas le programme ni les tests (cela demande un bac à sable isolé par utilisateur, à ajouter plus tard).
+
+`MAX_PARALLEL` agents tournent en même temps sur le serveur (les autres attendent leur tour), un seul à la fois par utilisateur.
 
 ## Si l'outil n'apparaît pas
 
