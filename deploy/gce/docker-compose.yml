@@ -1,0 +1,36 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    command: mongod --wiredTigerCacheSizeGB 0.25
+    volumes:
+      - mongo-data:/data/db
+
+  librechat:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:3080"
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      MONGO_URI: mongodb://mongo:27017/LibreChat
+    volumes:
+      - ../../librechat.yaml:/app/librechat.yaml:ro
+    depends_on:
+      - mongo
+      - dev-fix
+
+  dev-fix:
+    build: ./dev-fix
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - devfix-data:/data
+
+volumes:
+  mongo-data:
+  devfix-data:
