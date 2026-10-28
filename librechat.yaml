@@ -14,43 +14,29 @@ endpoints:
     maxRecursionLimit: 2
 
   custom:
-    # Le modèle derrière passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
-    # sont d'abord lus par Gemini, puis le texte est transmis au modèle.
-    # Clé fournie par le serveur (secret Fly JEREMY_API_KEY = clé_deepseek,clé_gemini, séparées par une virgule).
-    # Noms affichés : « Aube » (rapide, économique) et « Soleil » (le grand modèle, environ 3 fois plus cher).
-    # vision-bridge les traduit vers les vrais modèles.
+    # Les utilisateurs ne voient que « Aube » et « Soleil ».
+    # Le fournisseur (DeepSeek ou Gemini), le vrai modèle et la clé de chacun se règlent dans la
+    # page admin « Clés API » (compte ADMIN). LibreChat appelle sa propre route interne /ai-proxy
+    # (api/server/routes/aiModels.js), qui lit ces réglages et transmet au bon fournisseur.
+    # Les images et PDF sont d'abord lus par Gemini, puis le texte est transmis au modèle.
+    # apiKey : valeur factice obligatoire pour LibreChat ; la vraie clé n'est jamais ici.
+    # 3080 = internal_port de fly.toml.
     # titleConvo DÉSACTIVÉ : la génération de titre est une requête supplémentaire.
     # Historique résumé et limite de sortie AUTOMATIQUE : voir patch-history-limit.js
     # (réponse limitée à 1200 tokens, sans limite dès que le message demande du code).
     # Max Context Tokens : à régler dans l'interface (3000 sans outil, 6000 avec MCP légers).
     # Température basse : moins de réponses inventées.
-    # name : c'est le nom affiché dans le sélecteur de modèles (plus de « DeepSeek » visible).
     # iconURL : ton logo (écrit dans /assets/jeremy-logo.svg par patch-branding.js).
-    - name: "Jérémy"
-      apiKey: "${JEREMY_API_KEY}"
-      baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
+    - name: "Modèles"
+      apiKey: "interne"
+      baseURL: "http://127.0.0.1:3080/ai-proxy/v1"
       models:
         default: ["Aube", "Soleil"]
         fetch: false
       titleConvo: false
       addParams:
         temperature: 0.2
-      modelDisplayLabel: "Jérémy"
-      iconURL: "/assets/jeremy-logo.svg"
-
-    # Modèle R1 (14B) hébergé sur un GPU Modal (service deepseek-api).
-    # Texte uniquement. Le GPU s'éteint après 5 min d'inactivité : le premier
-    # message après une pause peut prendre environ 3 minutes (démarrage à froid).
-    # Clé fournie par le serveur (secret Fly JEREMY_GPU_API_KEY).
-    # titleConvo désactivé : un titre automatique réveillait le GPU pour rien.
-    - name: "Jérémy GPU"
-      apiKey: "${JEREMY_GPU_API_KEY}"
-      baseURL: "https://g64203490--deepseek-api-serve.us-east.modal.run/v1"
-      models:
-        default: ["deepseek-r1"]
-        fetch: false
-      titleConvo: false
-      modelDisplayLabel: "Jérémy GPU"
+      modelDisplayLabel: "Assistant"
       iconURL: "/assets/jeremy-logo.svg"
 
     # Génération de vidéos LTX-2.5 sur Modal (service ltx-2-5). Le modèle choisi = la durée

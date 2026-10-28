@@ -5,6 +5,7 @@
 require('./patch-google-link.js');
 require('./patch-identity.js');
 require('./patch-admin-link.js');
+require('./patch-ai-models.js');
 
 const fs = require('fs');
 
