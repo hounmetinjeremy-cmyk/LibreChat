@@ -24,6 +24,7 @@ endpoints:
     # (variable MAX_HISTORY_MESSAGES). Max Context Tokens : à régler dans l'interface
     # (3000 sans outil, 6000 avec des serveurs MCP légers).
     # Sortie limitée : max_tokens 1200 par réponse (les tokens de sortie coûtent plus cher).
+    # Pour le code : utiliser « Jérémy Code » (ci-dessous), sans limite de sortie.
     # Température basse : moins de réponses inventées.
     # name : c'est le nom affiché dans le sélecteur de modèles (plus de « DeepSeek » visible).
     # iconURL : ton logo (écrit dans /assets/jeremy-logo.svg par patch-branding.js).
@@ -38,6 +39,20 @@ endpoints:
         temperature: 0.2
         max_tokens: 1200
       modelDisplayLabel: "Jérémy"
+      iconURL: "/assets/jeremy-logo.svg"
+
+    # Même modèle, mais SANS limite de sortie : pour écrire du code complet sans coupure.
+    # Même clé à saisir dans l'interface que pour « Jérémy » (clé_deepseek,clé_gemini).
+    - name: "Jérémy Code"
+      apiKey: "user_provided"
+      baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
+      models:
+        default: ["Aube", "Soleil"]
+        fetch: false
+      titleConvo: false
+      addParams:
+        temperature: 0.2
+      modelDisplayLabel: "Jérémy Code"
       iconURL: "/assets/jeremy-logo.svg"
 
     # Modèle R1 (14B) hébergé sur un GPU Modal (service deepseek-api).
