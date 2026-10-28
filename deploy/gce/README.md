@@ -32,17 +32,21 @@ Copie ces lignes dans `.env` (commande : `nano .env`), puis remplis aussi :
 sudo docker compose up -d --build
 ```
 
-## 4. Brancher l'outil dans LibreChat
+L'outil `dev-fix` est déjà branché dans `librechat.gce.yaml` : rien d'autre à configurer dans LibreChat.
+(Si tu modifies `librechat.yaml` à la racine du dépôt, reporte le changement dans `librechat.gce.yaml`.)
 
-Dans LibreChat : ajouter un serveur MCP (menu des outils).
-- Type : streamable-http
-- URL : `http://dev-fix:3000/mcp`
-- En-tête : `Authorization` = `Bearer ` suivi de la valeur de `MCP_SECRET`
-
-## 5. Utiliser
+## 4. Utiliser
 
 Écrire dans le chat, par exemple : « Dans le dépôt Chap-money, j'ai un problème de paiement : ... ».
 L'outil `dev_fix` cherche les fichiers, fait une seule requête au modèle, applique la correction sur une branche et ouvre une pull request. Rien ne touche la branche principale tant que tu n'as pas validé la pull request.
+Une correction peut durer 1 à 2 minutes.
+
+## Si l'outil n'apparaît pas
+
+```
+sudo docker compose logs dev-fix
+sudo docker compose logs librechat | grep -i mcp
+```
 
 ## Mise à jour
 
