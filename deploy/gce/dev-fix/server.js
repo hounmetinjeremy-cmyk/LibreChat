@@ -6,13 +6,17 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const run = promisify(execFile);
 
-// Chaque utilisateur a SON dev : son token GitHub, ses dépôts, son espace de travail.
+// Chaque utilisateur a SON dev : son token GitHub, ses dépôts, son espace de travail,
+// et son budget de tokens par mois pour les corrections (FIX_BUDGET_USD).
 const SECRET = process.env.MCP_SECRET || '';
 const DS_KEY = process.env.DEEPSEEK_API_KEY || '';
 const DS_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
 const MAX_PARALLEL = parseInt(process.env.MAX_PARALLEL || '3', 10);
-const MAX_PER_DAY = parseInt(process.env.MAX_FIX_PER_DAY || '20', 10);
+const FIX_BUDGET = parseFloat(process.env.FIX_BUDGET_USD || '1');
+const PRICE_IN = parseFloat(process.env.DS_PRICE_IN || '0.14'); // dollars par million de tokens d'entrée
+const PRICE_OUT = parseFloat(process.env.DS_PRICE_OUT || '0.28'); // dollars par million de tokens de sortie
 const DATA = '/data/repos';
+const USAGE_FILE = '/data/usage.json';
 const MAX_FILES = 3;
 const MAX_CHARS = 12000;
 
@@ -37,7 +41,27 @@ const gh = (token, p, opts = {}) =>
     headers: { Authorization: 'Bearer ' + token, 'User-Agent': 'dev-fix', Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
   }).then((r) => r.json());
 
-// --- limites : parallèle global, un travail à la fois par utilisateur, plafond par jour ---
+// --- budget de tokens par utilisateur et par mois (conservé dans /data/usage.json) ---
+let usage = {};
+try {
+  usage = JSON.parse(fs.readFileSync(USAGE_FILE, 'utf8'));
+} catch (e) {
+  usage = {};
+}
+const monthKey = () => new Date().toISOString().slice(0, 7);
+const spent = (userKey) => (usage[userKey] && usage[userKey][monthKey()]) || 0;
+function addSpent(userKey, usd) {
+  const m = monthKey();
+  usage[userKey] = { [m]: (usage[userKey] && usage[userKey][m] ? usage[userKey][m] : 0) + usd };
+  try {
+    fs.mkdirSync(path.dirname(USAGE_FILE), { recursive: true });
+    fs.writeFileSync(USAGE_FILE, JSON.stringify(usage));
+  } catch (e) {
+    console.warn('usage non enregistré', e.message);
+  }
+}
+
+// --- limites : parallèle global et un travail à la fois par utilisateur ---
 let running = 0;
 const waiters = [];
 async function acquire() {
@@ -54,7 +78,6 @@ function release() {
   if (next) next();
 }
 const busyUsers = new Set();
-const daily = new Map();
 
 function cleanup() {
   try {
@@ -121,6 +144,7 @@ async function findFiles(dir, kws) {
 }
 
 async function ask(problem, files) {
+  const userContent = `Problème : ${problem}\n\n` + files.map((f) => `### ${f.path}\n${f.text}`).join('\n\n');
   const body = {
     model: DS_MODEL,
     temperature: 0,
@@ -132,10 +156,7 @@ async function ask(problem, files) {
         content:
           'Tu es un développeur expert. On te donne un problème et des extraits de fichiers. Réponds en JSON strict : {"explanation":"2 phrases","edits":[{"file":"chemin","search":"texte EXACT existant, court mais unique","replace":"nouveau texte"}]}. Modifie le minimum de lignes. Si tu ne peux pas corriger avec ces fichiers, mets edits=[] et explique quel fichier il faudrait voir.',
       },
-      {
-        role: 'user',
-        content: `Problème : ${problem}\n\n` + files.map((f) => `### ${f.path}\n${f.text}`).join('\n\n'),
-      },
+      { role: 'user', content: userContent },
     ],
   };
   const r = await fetch('https://api.deepseek.com/chat/completions', {
@@ -144,7 +165,10 @@ async function ask(problem, files) {
     body: JSON.stringify(body),
   });
   const j = await r.json();
-  return JSON.parse(j.choices[0].message.content);
+  const tokensIn = (j.usage && j.usage.prompt_tokens) || Math.ceil(userContent.length / 4);
+  const tokensOut = (j.usage && j.usage.completion_tokens) || 500;
+  const usd = (tokensIn * PRICE_IN + tokensOut * PRICE_OUT) / 1e6;
+  return { answer: JSON.parse(j.choices[0].message.content), usd };
 }
 
 async function devFix(ctx, repoArg, problem) {
@@ -159,15 +183,12 @@ async function devFix(ctx, repoArg, problem) {
   if (!/^[\w.-]+$/.test(owner || '') || !/^[\w.-]+$/.test(repo || '')) return 'Nom de dépôt invalide (forme : nom ou proprietaire/nom).';
 
   const userKey = crypto.createHash('sha256').update(ctx.userId || token).digest('hex').slice(0, 16);
-  const day = new Date().toISOString().slice(0, 10);
-  const dayKey = userKey + ':' + day;
-  if ((daily.get(dayKey) || 0) >= MAX_PER_DAY) return `Limite atteinte : ${MAX_PER_DAY} corrections par jour. Reviens demain.`;
+  if (spent(userKey) >= FIX_BUDGET) return `Budget de corrections épuisé pour ce mois (${spent(userKey).toFixed(2)} $ sur ${FIX_BUDGET.toFixed(2)} $). Il revient le mois prochain.`;
   if (busyUsers.has(userKey)) return 'Une de tes corrections est déjà en cours, attends qu\'elle finisse.';
 
   busyUsers.add(userKey);
   await acquire();
   try {
-    daily.set(dayKey, (daily.get(dayKey) || 0) + 1);
     cleanup();
     const dir = path.join(DATA, userKey, owner, repo);
     const base = await sync(dir, owner, repo, token);
@@ -176,7 +197,9 @@ async function devFix(ctx, repoArg, problem) {
     const names = await findFiles(dir, kws);
     if (names.length === 0) return `Aucun fichier trouvé pour : ${kws.join(', ')}. Reformule avec un mot du code (ex : fedapay, login).`;
     const files = names.map((p) => ({ path: p, text: fs.readFileSync(path.join(dir, p), 'utf8').slice(0, MAX_CHARS) }));
-    const answer = await ask(problem, files);
+    const { answer, usd } = await ask(problem, files);
+    addSpent(userKey, usd);
+    const left = `Budget corrections restant ce mois : ${Math.max(0, FIX_BUDGET - spent(userKey)).toFixed(2)} $`;
     const applied = [];
     const failed = [];
     for (const e of answer.edits || []) {
@@ -194,7 +217,7 @@ async function devFix(ctx, repoArg, problem) {
       }
     }
     if (applied.length === 0) {
-      return `${answer.explanation || ''}\nAucune modification appliquée. Fichiers regardés : ${names.join(', ')}.`;
+      return `${answer.explanation || ''}\nAucune modification appliquée. Fichiers regardés : ${names.join(', ')}.\n${left}`;
     }
     const branch = 'devfix/' + Date.now();
     await git(['checkout', '-b', branch], dir);
@@ -205,7 +228,7 @@ async function devFix(ctx, repoArg, problem) {
       method: 'POST',
       body: JSON.stringify({ title: 'dev-fix: ' + problem.slice(0, 60), head: branch, base, body: answer.explanation || '' }),
     });
-    return `${answer.explanation || ''}\nFichiers modifiés : ${applied.join(', ')}${failed.length ? '\nNon appliqués : ' + failed.join(', ') : ''}\nPull request : ${pr.html_url || scrub(JSON.stringify(pr).slice(0, 200), token)}`;
+    return `${answer.explanation || ''}\nFichiers modifiés : ${applied.join(', ')}${failed.length ? '\nNon appliqués : ' + failed.join(', ') : ''}\nPull request : ${pr.html_url || scrub(JSON.stringify(pr).slice(0, 200), token)}\n${left}`;
   } catch (e) {
     return 'Erreur : ' + scrub(String(e.stderr || e.message || e).slice(0, 300), token);
   } finally {
@@ -259,7 +282,7 @@ http
       result = {
         protocolVersion: (msg.params && msg.params.protocolVersion) || '2025-03-26',
         capabilities: { tools: {} },
-        serverInfo: { name: 'dev-fix', version: '2.0.0' },
+        serverInfo: { name: 'dev-fix', version: '2.1.0' },
       };
     } else if (msg.method === 'tools/list') {
       result = { tools: TOOLS };
