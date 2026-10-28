@@ -1,6 +1,7 @@
 version: 1.2.1
 
-# Copie de ../../librechat.yaml pour le serveur GCE, avec en plus l'outil dev-fix.
+# Copie de ../../librechat.yaml pour le serveur GCE, avec en plus l'outil dev-fix,
+# l'abonnement (tokens payés avec tes clés) et le budget de tokens par utilisateur.
 # Si tu modifies librechat.yaml à la racine, reporte le changement ici.
 
 interface:
@@ -8,6 +9,18 @@ interface:
     use: true
     create: true
     share: false
+
+# Budget de tokens du chat par utilisateur : 2 $ par mois (1 $ = 1 000 000 de crédits).
+# Les corrections de code ont leur propre budget (FIX_BUDGET_USD dans .env, 1 $ par mois).
+# Total : 3 $ de tokens par mois pour un abonnement de 13 $.
+# La limite de 80 messages par jour est dans .env (MESSAGE_USER_MAX).
+balance:
+  enabled: true
+  startBalance: 2000000
+  autoRefillEnabled: true
+  refillIntervalValue: 30
+  refillIntervalUnit: "days"
+  refillAmount: 2000000
 
 endpoints:
   # 1 message = 1 requête (sans outil). Avec un agent et un outil : 2 requêtes maximum
@@ -19,13 +32,14 @@ endpoints:
   custom:
     # Le modèle derrière passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
     # sont d'abord lus par Gemini, puis le texte est transmis au modèle.
-    # Clé à saisir dans l'interface : clé_deepseek,clé_gemini (séparées par une virgule).
+    # Ici la clé vient de TON .env (VISION_KEYS=clé_deepseek,clé_gemini) : l'abonnement
+    # inclut les tokens, l'utilisateur ne saisit rien.
     # Noms affichés : « Aube » (rapide, économique) et « Soleil » (le grand modèle, environ 3 fois plus cher).
     # titleConvo DÉSACTIVÉ : la génération de titre est une requête supplémentaire.
     # Historique résumé et limite de sortie AUTOMATIQUE : voir patch-history-limit.js
     # (réponse limitée à 1200 tokens, sans limite dès que le message demande du code).
     - name: "Jérémy"
-      apiKey: "user_provided"
+      apiKey: "${VISION_KEYS}"
       baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
       models:
         default: ["Aube", "Soleil"]
