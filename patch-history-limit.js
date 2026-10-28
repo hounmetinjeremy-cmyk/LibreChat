@@ -1,7 +1,8 @@
-// Patch de build : l'historique envoyé au modèle = un résumé de 4 lignes + ton dernier message.
+// Patch de build : l'historique envoyé au modèle = résumé de 3 phrases + ton message actuel.
+// Quel que soit le nombre de messages (10 ou 1000), le résumé garde toujours la même taille.
 // Résumé fait localement (aucune requête supplémentaire, aucun token en plus) :
-// une ligne par échange récent (début de ta question + début de la réponse).
-// Variable HISTORY_SUMMARY_LINES (défaut 4 ; 0 = pas de résumé, historique complet).
+//   1) le sujet du départ (ta première question), 2) ta dernière question, 3) la dernière réponse.
+// Variable HISTORY_SUMMARY_LINES (défaut 3 ; 0 = pas de résumé, historique complet).
 // Si le code de LibreChat a changé et que le point d'insertion est introuvable,
 // le patch est ignoré (avertissement) et le build continue normalement.
 const fs = require('fs');
@@ -12,22 +13,21 @@ const anchor = '    return this.addPreviousAttachments(_messages);';
 const marker = 'HISTORY_SUMMARY_LINES';
 
 const injection = `    try {
-      const summaryLines = parseInt(process.env.HISTORY_SUMMARY_LINES ?? '4', 10);
-      if (summaryLines > 0 && _messages.length > 1) {
+      const summaryOn = parseInt(process.env.HISTORY_SUMMARY_LINES ?? '3', 10);
+      if (summaryOn > 0 && _messages.length > 1) {
         const clip = (t, n) => String(t ?? '').replace(/\\s+/g, ' ').trim().slice(0, n);
+        const isText = (m) => m && typeof m.text === 'string' && m.text.length > 0;
         const last = _messages[_messages.length - 1];
         const older = _messages.slice(0, -1);
-        const exchanges = [];
-        for (let i = 0; i < older.length; i++) {
-          if (!older[i].isCreatedByUser || typeof older[i].text !== 'string') continue;
-          const next = older[i + 1];
-          const answer = next && !next.isCreatedByUser && typeof next.text === 'string' ? clip(next.text, 90) : '';
-          exchanges.push('- Question : ' + clip(older[i].text, 70) + ' | Réponse : ' + answer);
-        }
-        const lines = exchanges.slice(-summaryLines);
-        if (lines.length > 0 && last.isCreatedByUser && typeof last.text === 'string') {
+        const users = older.filter((m) => m.isCreatedByUser && isText(m));
+        const bots = older.filter((m) => !m.isCreatedByUser && isText(m));
+        const parts = [];
+        if (users.length > 1) parts.push('Début de la discussion : ' + clip(users[0].text, 100) + '.');
+        if (users.length > 0) parts.push('Dernière question : ' + clip(users[users.length - 1].text, 100) + '.');
+        if (bots.length > 0) parts.push('Dernière réponse : ' + clip(bots[bots.length - 1].text, 120) + '.');
+        if (parts.length > 0 && last.isCreatedByUser && typeof last.text === 'string') {
           _messages = [
-            { ...last, text: '[Résumé de la conversation]\\n' + lines.join('\\n') + '\\n\\n[Message actuel]\\n' + last.text },
+            { ...last, text: '[Résumé de la conversation, ' + older.length + ' messages avant]\\n' + parts.join(' ') + '\\n\\n[Message actuel]\\n' + last.text },
           ];
         }
       }
