@@ -66,14 +66,32 @@ async function loadAll() {
 
 let originalEnv = null;
 
-/** Applique les clés enregistrées aux variables d'environnement (sinon garde les secrets Fly). */
+const real = (v) => (v && v !== 'user_provided' ? v : '');
+
+/** « clé_deepseek,clé_gemini » -> [clé_deepseek, clé_gemini] (une partie peut être vide). */
+function splitPair(value) {
+  if (!value) {
+    return ['', ''];
+  }
+  const i = value.indexOf(',');
+  return i === -1 ? [value, ''] : [value.slice(0, i), value.slice(i + 1)];
+}
+
+/**
+ * Applique les clés enregistrées aux variables d'environnement.
+ * Pas besoin d'avoir les quatre clés : chaque clé enregistrée est utilisée, et pour toute clé
+ * absente on garde la valeur des secrets Fly (ou rien).
+ */
 function applyToEnv(values) {
   if (originalEnv == null) {
     originalEnv = Object.fromEntries(ENV_NAMES.map((name) => [name, process.env[name]]));
   }
+  const [origDeepseek, origGeminiInPair] = splitPair(originalEnv.JEREMY_API_KEY);
+  const deepseek = values.deepseek || real(origDeepseek);
+  const gemini = values.gemini || real(originalEnv.GOOGLE_KEY) || real(origGeminiInPair);
   const wanted = {
     GOOGLE_KEY: values.gemini,
-    JEREMY_API_KEY: values.deepseek && values.gemini ? `${values.deepseek},${values.gemini}` : undefined,
+    JEREMY_API_KEY: deepseek || gemini ? `${deepseek},${gemini}` : undefined,
     JEREMY_GPU_API_KEY: values.modal,
     VIDEO_API_KEY: values.video,
   };
