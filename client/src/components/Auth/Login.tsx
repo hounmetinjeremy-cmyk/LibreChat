@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { OpenIDIcon, useToastContext } from '@librechat/client';
-import { ErrorTypes, registerPage } from 'librechat-data-provider';
+import { ErrorTypes } from 'librechat-data-provider';
 import { useOutletContext, useSearchParams, useLocation } from 'react-router-dom';
 import type { TLoginLayoutContext } from '~/common';
 import type { TranslationKeys } from '~/hooks';
@@ -9,7 +9,6 @@ import { ErrorMessage } from '~/components/Auth/ErrorMessage';
 import SocialButton from '~/components/Auth/SocialButton';
 import { useAuthContext } from '~/hooks/AuthContext';
 import { useLocalize } from '~/hooks';
-import LoginForm from './LoginForm';
 
 interface LoginLocationState {
   redirect_to?: string;
@@ -25,7 +24,7 @@ const oauthErrorKeys: Record<string, TranslationKeys> = {
 function Login() {
   const localize = useLocalize();
   const { showToast } = useToastContext();
-  const { error, setError, login } = useAuthContext();
+  const { error } = useAuthContext();
   const { startupConfig } = useOutletContext<TLoginLayoutContext>();
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -111,31 +110,9 @@ function Login() {
     );
   }
 
-  return (
-    <>
-      {error != null && <ErrorMessage>{localize(getLoginError(error))}</ErrorMessage>}
-      {startupConfig?.emailLoginEnabled === true && (
-        <LoginForm
-          onSubmit={login}
-          startupConfig={startupConfig}
-          error={error}
-          setError={setError}
-        />
-      )}
-      {startupConfig?.registrationEnabled === true && (
-        <p className="my-4 text-center text-sm font-light text-text-secondary">
-          {' '}
-          {localize('com_auth_no_account')}{' '}
-          <a
-            href={registerPage()}
-            className="inline-flex p-1 text-sm font-medium text-accent-primary underline decoration-transparent transition-all duration-200 hover:text-accent-primary-hover hover:decoration-accent-primary-hover focus:text-accent-primary-hover focus:decoration-accent-primary-hover"
-          >
-            {localize('com_auth_sign_up')}
-          </a>
-        </p>
-      )}
-    </>
-  );
+  /** Connexion par Google uniquement : pas de formulaire email/mot de passe ni de lien d'inscription.
+   *  Le bouton Google est affiché par AuthLayout (SocialLoginRender). */
+  return <>{error != null && <ErrorMessage>{localize(getLoginError(error))}</ErrorMessage>}</>;
 }
 
 export default Login;
