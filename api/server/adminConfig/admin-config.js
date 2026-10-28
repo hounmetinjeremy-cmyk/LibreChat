@@ -9,7 +9,7 @@
   ];
   var MODELS = {
     deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
-    gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']
+    gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.5-flash']
   };
   var intro = document.getElementById('intro');
   var fieldsBox = document.getElementById('fields');
@@ -17,6 +17,7 @@
   var statusEl = document.getElementById('status');
   var token = null;
   var refs = {};
+  var loading = false;
 
   function setStatus(text, kind) {
     statusEl.textContent = text || '';
@@ -147,12 +148,19 @@
     showState(refs.video.key, data && data.video);
   }
 
-  function showLoginNeeded(text) {
-    intro.textContent = text + ' ';
+  function showLoginNeeded(text, code) {
+    intro.textContent = text + (code ? ' (code ' + code + ') ' : ' ');
     var a = document.createElement('a');
     a.href = '/';
     a.textContent = 'Ouvrir l’application';
     intro.appendChild(a);
+    intro.appendChild(document.createTextNode(' puis '));
+    var retry = document.createElement('a');
+    retry.href = '#';
+    retry.textContent = 'Réessayer';
+    retry.addEventListener('click', function (e) { e.preventDefault(); start(); });
+    intro.appendChild(retry);
+    intro.appendChild(document.createTextNode('.'));
   }
 
   saveBtn.addEventListener('click', function () {
@@ -182,21 +190,32 @@
       .then(function () { saveBtn.disabled = false; });
   });
 
-  fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' })
-    .then(function (r) { return r.text(); })
-    .then(function (text) {
-      var data = null;
-      try { data = JSON.parse(text); } catch (e) { data = null; }
-      if (!data || !data.token || !data.user) { showLoginNeeded('Connecte-toi d’abord avec ton compte administrateur.'); return null; }
-      if (data.user.role !== 'ADMIN') { intro.textContent = 'Cette page est réservée au compte administrateur.'; return null; }
-      token = data.token;
-      intro.textContent = 'Choisis pour Aube et Soleil le fournisseur, le modèle et la clé. Les utilisateurs voient seulement « Aube » et « Soleil ».';
-      ROLES.forEach(buildRole);
-      buildVision();
-      buildVideo();
-      saveBtn.hidden = false;
-      return api('/api/admin-models', 'GET').then(renderModels)
-        .then(function () { return api('/api/admin-keys', 'GET'); }).then(renderVideo);
-    })
-    .catch(function (e) { setStatus(e && e.message ? e.message : 'Erreur de chargement.', 'err'); });
+  /* Vérifie la connexion ; relancée au retour sur la page (bouton « retour » du navigateur). */
+  function start() {
+    if (token || loading) { return; }
+    loading = true;
+    var code = null;
+    fetch('/api/auth/refresh', { method: 'POST', credentials: 'include', cache: 'no-store' })
+      .then(function (r) { code = r.status; return r.text(); })
+      .then(function (text) {
+        var data = null;
+        try { data = JSON.parse(text); } catch (e) { data = null; }
+        if (!data || !data.token || !data.user) { showLoginNeeded('Connecte-toi d’abord avec ton compte administrateur.', code); return null; }
+        if (data.user.role !== 'ADMIN') { intro.textContent = 'Cette page est réservée au compte administrateur.'; return null; }
+        token = data.token;
+        intro.textContent = 'Choisis pour Aube et Soleil le fournisseur, le modèle et la clé. Les utilisateurs voient seulement « Aube » et « Soleil ».';
+        ROLES.forEach(buildRole);
+        buildVision();
+        buildVideo();
+        saveBtn.hidden = false;
+        return api('/api/admin-models', 'GET').then(renderModels)
+          .then(function () { return api('/api/admin-keys', 'GET'); }).then(renderVideo);
+      })
+      .catch(function (e) { setStatus(e && e.message ? e.message : 'Erreur de chargement.', 'err'); })
+      .then(function () { loading = false; });
+  }
+
+  window.addEventListener('pageshow', function () { start(); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) { start(); } });
+  start();
 })();
