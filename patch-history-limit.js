@@ -1,7 +1,7 @@
-// Patch de build : réduit les tokens envoyés au modèle à chaque message.
-// 1) Ne garde que les N derniers messages (MAX_HISTORY_MESSAGES, défaut 2 ; 0 = pas de limite).
-// 2) Tronque chaque ancien message à C caractères (MAX_HISTORY_CHARS, défaut 1200).
-// Le dernier message (le tien) n'est jamais tronqué.
+// Patch de build : l'historique envoyé au modèle = un résumé de 4 lignes + ton dernier message.
+// Résumé fait localement (aucune requête supplémentaire, aucun token en plus) :
+// une ligne par échange récent (début de ta question + début de la réponse).
+// Variable HISTORY_SUMMARY_LINES (défaut 4 ; 0 = pas de résumé, historique complet).
 // Si le code de LibreChat a changé et que le point d'insertion est introuvable,
 // le patch est ignoré (avertissement) et le build continue normalement.
 const fs = require('fs');
@@ -9,27 +9,30 @@ const path = require('path');
 
 const file = path.join(__dirname, 'api', 'app', 'clients', 'BaseClient.js');
 const anchor = '    return this.addPreviousAttachments(_messages);';
-const marker = 'MAX_HISTORY_MESSAGES';
+const marker = 'HISTORY_SUMMARY_LINES';
 
-const injection = `    const maxHistoryMessages = parseInt(process.env.MAX_HISTORY_MESSAGES ?? '2', 10);
-    if (maxHistoryMessages > 0 && _messages.length > maxHistoryMessages) {
-      _messages = _messages.slice(-maxHistoryMessages);
-      while (_messages.length > 1 && !_messages[0].isCreatedByUser) {
-        _messages.shift();
-      }
-    }
-    try {
-      const maxHistoryChars = parseInt(process.env.MAX_HISTORY_CHARS ?? '1200', 10);
-      if (maxHistoryChars > 0) {
-        for (let i = 0; i < _messages.length - 1; i++) {
-          const m = _messages[i];
-          if (m && typeof m.text === 'string' && m.text.length > maxHistoryChars) {
-            _messages[i] = { ...m, text: m.text.slice(0, maxHistoryChars) + ' [...]' };
-          }
+const injection = `    try {
+      const summaryLines = parseInt(process.env.HISTORY_SUMMARY_LINES ?? '4', 10);
+      if (summaryLines > 0 && _messages.length > 1) {
+        const clip = (t, n) => String(t ?? '').replace(/\\s+/g, ' ').trim().slice(0, n);
+        const last = _messages[_messages.length - 1];
+        const older = _messages.slice(0, -1);
+        const exchanges = [];
+        for (let i = 0; i < older.length; i++) {
+          if (!older[i].isCreatedByUser || typeof older[i].text !== 'string') continue;
+          const next = older[i + 1];
+          const answer = next && !next.isCreatedByUser && typeof next.text === 'string' ? clip(next.text, 90) : '';
+          exchanges.push('- Question : ' + clip(older[i].text, 70) + ' | Réponse : ' + answer);
+        }
+        const lines = exchanges.slice(-summaryLines);
+        if (lines.length > 0 && last.isCreatedByUser && typeof last.text === 'string') {
+          _messages = [
+            { ...last, text: '[Résumé de la conversation]\\n' + lines.join('\\n') + '\\n\\n[Message actuel]\\n' + last.text },
+          ];
         }
       }
     } catch (e) {
-      console.warn('[patch-history-limit] troncature ignorée', e);
+      console.warn('[patch-history-limit] résumé ignoré', e);
     }
 `;
 
