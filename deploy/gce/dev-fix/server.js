@@ -1,15 +1,17 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const run = promisify(execFile);
 
-const OWNER = process.env.ALLOWED_OWNER || 'hounmetinjeremy-cmyk';
+// Chaque utilisateur a SON dev : son token GitHub, ses dépôts, son espace de travail.
 const SECRET = process.env.MCP_SECRET || '';
-const GH = process.env.GITHUB_TOKEN || '';
 const DS_KEY = process.env.DEEPSEEK_API_KEY || '';
 const DS_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+const MAX_PARALLEL = parseInt(process.env.MAX_PARALLEL || '3', 10);
+const MAX_PER_DAY = parseInt(process.env.MAX_FIX_PER_DAY || '20', 10);
 const DATA = '/data/repos';
 const MAX_FILES = 3;
 const MAX_CHARS = 12000;
@@ -24,8 +26,49 @@ const SYN = {
 };
 const STOP = new Set(['dans', 'avec', 'pour', 'mais', 'une', 'des', 'les', 'que', 'qui', 'pas', 'sur', 'mon', 'ton', 'est', 'the', 'and', 'problème', 'probleme', 'bug', 'erreur']);
 
-const git = (args, cwd) => run('git', args, { cwd, maxBuffer: 20 * 1024 * 1024 });
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const b64 = (token) => Buffer.from('x-access-token:' + token).toString('base64');
+const git = (args, cwd, token) =>
+  run('git', [...(token ? ['-c', 'http.extraHeader=Authorization: Basic ' + b64(token)] : []), ...args], { cwd, maxBuffer: 20 * 1024 * 1024 });
+const scrub = (text, token) => String(text).split(token).join('***').split(b64(token)).join('***');
+const gh = (token, p, opts = {}) =>
+  fetch('https://api.github.com' + p, {
+    ...opts,
+    headers: { Authorization: 'Bearer ' + token, 'User-Agent': 'dev-fix', Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
+  }).then((r) => r.json());
+
+// --- limites : parallèle global, un travail à la fois par utilisateur, plafond par jour ---
+let running = 0;
+const waiters = [];
+async function acquire() {
+  if (running < MAX_PARALLEL) {
+    running++;
+    return;
+  }
+  await new Promise((r) => waiters.push(r));
+  running++;
+}
+function release() {
+  running--;
+  const next = waiters.shift();
+  if (next) next();
+}
+const busyUsers = new Set();
+const daily = new Map();
+
+function cleanup() {
+  try {
+    const now = Date.now();
+    for (const u of fs.readdirSync(DATA))
+      for (const o of fs.readdirSync(path.join(DATA, u)))
+        for (const r of fs.readdirSync(path.join(DATA, u, o))) {
+          const d = path.join(DATA, u, o, r);
+          if (now - fs.statSync(d).mtimeMs > 3 * 864e5) fs.rmSync(d, { recursive: true, force: true });
+        }
+  } catch (e) {
+    /* rien à nettoyer */
+  }
+}
 
 function keywords(problem) {
   const words = problem
@@ -42,21 +85,18 @@ function keywords(problem) {
   return [...out].slice(0, 12);
 }
 
-async function sync(repo) {
-  const dir = path.join(DATA, repo);
-  const url = `https://x-access-token:${GH}@github.com/${OWNER}/${repo}.git`;
+async function sync(dir, owner, repo, token) {
   if (!fs.existsSync(path.join(dir, '.git'))) {
-    fs.mkdirSync(DATA, { recursive: true });
-    await run('git', ['clone', '--depth', '50', url, dir]);
+    fs.mkdirSync(path.dirname(dir), { recursive: true });
+    await git(['clone', '--depth', '50', `https://github.com/${owner}/${repo}.git`, dir], undefined, token);
   } else {
-    await git(['remote', 'set-url', 'origin', url], dir);
-    await git(['fetch', 'origin', '--depth', '50'], dir);
+    await git(['fetch', 'origin', '--depth', '50'], dir, token);
   }
   const ref = (await git(['symbolic-ref', 'refs/remotes/origin/HEAD'], dir)).stdout.trim();
   const base = ref.replace('refs/remotes/origin/', '');
   await git(['checkout', '-f', '--detach', 'origin/' + base], dir);
   await git(['clean', '-fd'], dir);
-  return { dir, base };
+  return base;
 }
 
 async function findFiles(dir, kws) {
@@ -107,15 +147,31 @@ async function ask(problem, files) {
   return JSON.parse(j.choices[0].message.content);
 }
 
-let busy = false;
+async function devFix(ctx, repoArg, problem) {
+  const token = ctx.token;
+  if (!token) return 'Ton token GitHub est manquant : ouvre les réglages de l\'outil dev-fix dans LibreChat et saisis-le.';
+  if (!DS_KEY) return 'DEEPSEEK_API_KEY manquant dans .env du serveur.';
+  if (!problem) return 'Décris le problème en une ou deux phrases.';
+  const me = await gh(token, '/user');
+  if (!me.login) return 'Token GitHub invalide ou expiré.';
+  const parts = repoArg.includes('/') ? repoArg.split('/') : [me.login, repoArg];
+  const [owner, repo] = parts;
+  if (!/^[\w.-]+$/.test(owner || '') || !/^[\w.-]+$/.test(repo || '')) return 'Nom de dépôt invalide (forme : nom ou proprietaire/nom).';
 
-async function devFix(repo, problem) {
-  if (!/^[\w.-]+$/.test(repo)) return 'Nom de dépôt invalide.';
-  if (!GH || !DS_KEY) return 'GITHUB_TOKEN ou DEEPSEEK_API_KEY manquant dans .env.';
-  if (busy) return 'Une correction est déjà en cours, réessaie dans une minute.';
-  busy = true;
+  const userKey = crypto.createHash('sha256').update(ctx.userId || token).digest('hex').slice(0, 16);
+  const day = new Date().toISOString().slice(0, 10);
+  const dayKey = userKey + ':' + day;
+  if ((daily.get(dayKey) || 0) >= MAX_PER_DAY) return `Limite atteinte : ${MAX_PER_DAY} corrections par jour. Reviens demain.`;
+  if (busyUsers.has(userKey)) return 'Une de tes corrections est déjà en cours, attends qu\'elle finisse.';
+
+  busyUsers.add(userKey);
+  await acquire();
   try {
-    const { dir, base } = await sync(repo);
+    daily.set(dayKey, (daily.get(dayKey) || 0) + 1);
+    cleanup();
+    const dir = path.join(DATA, userKey, owner, repo);
+    const base = await sync(dir, owner, repo, token);
+    fs.utimesSync(dir, new Date(), new Date());
     const kws = keywords(problem);
     const names = await findFiles(dir, kws);
     if (names.length === 0) return `Aucun fichier trouvé pour : ${kws.join(', ')}. Reformule avec un mot du code (ex : fedapay, login).`;
@@ -144,17 +200,17 @@ async function devFix(repo, problem) {
     await git(['checkout', '-b', branch], dir);
     await git(['add', '-A'], dir);
     await git(['-c', 'user.name=dev-fix', '-c', 'user.email=dev-fix@users.noreply.github.com', 'commit', '-m', 'dev-fix: ' + problem.slice(0, 60)], dir);
-    await git(['push', 'origin', branch], dir);
-    const pr = await fetch(`https://api.github.com/repos/${OWNER}/${repo}/pulls`, {
+    await git(['push', 'origin', branch], dir, token);
+    const pr = await gh(token, `/repos/${owner}/${repo}/pulls`, {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + GH, 'Content-Type': 'application/json', 'User-Agent': 'dev-fix' },
       body: JSON.stringify({ title: 'dev-fix: ' + problem.slice(0, 60), head: branch, base, body: answer.explanation || '' }),
-    }).then((r) => r.json());
-    return `${answer.explanation || ''}\nFichiers modifiés : ${applied.join(', ')}${failed.length ? '\nNon appliqués : ' + failed.join(', ') : ''}\nPull request : ${pr.html_url || JSON.stringify(pr).slice(0, 200)}`;
+    });
+    return `${answer.explanation || ''}\nFichiers modifiés : ${applied.join(', ')}${failed.length ? '\nNon appliqués : ' + failed.join(', ') : ''}\nPull request : ${pr.html_url || scrub(JSON.stringify(pr).slice(0, 200), token)}`;
   } catch (e) {
-    return 'Erreur : ' + String(e.message || e).slice(0, 300);
+    return 'Erreur : ' + scrub(String(e.stderr || e.message || e).slice(0, 300), token);
   } finally {
-    busy = false;
+    busyUsers.delete(userKey);
+    release();
   }
 }
 
@@ -162,7 +218,7 @@ const TOOLS = [
   {
     name: 'dev_fix',
     description:
-      'Corrige un bug dans un dépôt GitHub : cherche les fichiers concernés, propose la correction et ouvre une pull request. Entrée : repo (nom du dépôt), problem (le problème en une ou deux phrases).',
+      'Corrige un bug dans un de TES dépôts GitHub : cherche les fichiers concernés, propose la correction et ouvre une pull request. Entrée : repo (nom du dépôt, ou proprietaire/nom), problem (le problème en une ou deux phrases).',
     inputSchema: {
       type: 'object',
       properties: { repo: { type: 'string' }, problem: { type: 'string' } },
@@ -203,13 +259,17 @@ http
       result = {
         protocolVersion: (msg.params && msg.params.protocolVersion) || '2025-03-26',
         capabilities: { tools: {} },
-        serverInfo: { name: 'dev-fix', version: '1.0.0' },
+        serverInfo: { name: 'dev-fix', version: '2.0.0' },
       };
     } else if (msg.method === 'tools/list') {
       result = { tools: TOOLS };
     } else if (msg.method === 'tools/call') {
       const a = (msg.params && msg.params.arguments) || {};
-      const text = await devFix(String(a.repo || ''), String(a.problem || ''));
+      const ctx = {
+        token: String(req.headers['x-github-token'] || '').trim(),
+        userId: String(req.headers['x-user-id'] || '').trim(),
+      };
+      const text = await devFix(ctx, String(a.repo || ''), String(a.problem || ''));
       result = { content: [{ type: 'text', text }] };
     } else {
       result = {};
