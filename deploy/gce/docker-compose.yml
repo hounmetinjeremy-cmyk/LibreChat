@@ -19,7 +19,7 @@ services:
       PORT: 3080
       MONGO_URI: mongodb://mongo:27017/LibreChat
     volumes:
-      - ../../librechat.yaml:/app/librechat.yaml:ro
+      - ./librechat.gce.yaml:/app/librechat.yaml:ro
     depends_on:
       - mongo
       - dev-fix
