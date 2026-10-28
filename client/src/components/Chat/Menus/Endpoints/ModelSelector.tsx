@@ -88,6 +88,10 @@ function ModelSelectorContent() {
     />
   );
 
+  // Quand des modèles prédéfinis (Aube, Soleil) existent, on n'affiche qu'eux :
+  // pas de niveaux « Modèles » ni « Vidéo » dans le menu.
+  const onlySpecs = (modelSpecs?.length ?? 0) > 0;
+
   return (
     <div className="relative flex min-w-0 max-w-[60vw] flex-col items-center gap-2 sm:max-w-xs">
       <Menu
@@ -114,7 +118,7 @@ function ModelSelectorContent() {
               selectedValues.modelSpec || '',
             )}
             {/* Render endpoints (will include grouped specs matching endpoint names) */}
-            {renderEndpoints(mappedEndpoints ?? [])}
+            {onlySpecs ? null : renderEndpoints(mappedEndpoints ?? [])}
             {/* Render custom groups (specs with group field not matching any endpoint) */}
             {renderCustomGroups(modelSpecs || [], mappedEndpoints ?? [])}
           </>
