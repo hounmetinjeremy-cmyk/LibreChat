@@ -68,6 +68,9 @@ RUN node patch-resume-sheet.js
 # Met le nom « Jérémy » dans le code et remplace les logos (voir patch-branding.js)
 RUN node patch-branding.js
 
+# Ajoute la page admin « /admin-config » pour enregistrer les clés des fournisseurs (voir patch-admin-keys.js)
+RUN node patch-admin-keys.js
+
 RUN \
     # React client build with configurable memory
     NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}" npm run frontend; \
