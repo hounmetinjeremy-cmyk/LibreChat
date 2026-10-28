@@ -9,7 +9,14 @@ primary_region = 'ams'
 [build]
 
 [env]
-  ALLOW_REGISTRATION = 'true'
+  # Connexion par Google uniquement (pas d'email/mot de passe)
+  ALLOW_EMAIL_LOGIN = 'false'
+  ALLOW_REGISTRATION = 'false'
+  ALLOW_SOCIAL_LOGIN = 'true'
+  ALLOW_SOCIAL_REGISTRATION = 'true'
+  GOOGLE_CLIENT_ID = '358155489243-03i6klg0aek034eiu2vu7jniiki22om0.apps.googleusercontent.com'
+  GOOGLE_CALLBACK_URL = '/oauth/google/callback'
+  # GOOGLE_CLIENT_SECRET : à mettre dans les secrets Fly.io, jamais dans ce fichier (dépôt public).
   DOMAIN_CLIENT = 'https://librechat-a7cwuq.fly.dev'
   DOMAIN_SERVER = 'https://librechat-a7cwuq.fly.dev'
   # Active Gemini (Google) : la clé est saisie dans l'interface par chaque utilisateur.
