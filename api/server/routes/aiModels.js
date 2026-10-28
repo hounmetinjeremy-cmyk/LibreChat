@@ -284,6 +284,11 @@ async function handleChat(req, res) {
         .json(err(`Modèle manquant pour « ${LABELS[role]} » : à renseigner dans la page admin « Clés API ».`));
     }
     body.model = target.model;
+    // Précaution Gemini : une limite de sortie très basse (1200) peut couper ou vider la réponse
+    // des modèles qui « réfléchissent » avant de répondre.
+    if (target.provider === 'gemini' && typeof body.max_tokens === 'number') {
+      body.max_tokens = Math.max(body.max_tokens, 4096);
+    }
     body.messages = await convertMessages(body.messages, resolveVision(cfg));
 
     const ctrl = new AbortController();
