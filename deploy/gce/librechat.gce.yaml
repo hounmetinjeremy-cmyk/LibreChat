@@ -1,0 +1,79 @@
+version: 1.2.1
+
+# Copie de ../../librechat.yaml pour le serveur GCE, avec en plus l'outil dev-fix.
+# Si tu modifies librechat.yaml à la racine, reporte le changement ici.
+
+interface:
+  mcpServers:
+    use: true
+    create: true
+    share: false
+
+endpoints:
+  # 1 message = 1 requête (sans outil). Avec un agent et un outil : 2 requêtes maximum
+  # (appel d'outil + réponse finale). Jamais plus.
+  agents:
+    recursionLimit: 2
+    maxRecursionLimit: 2
+
+  custom:
+    # Le modèle derrière passe par « vision-bridge » (Worker Cloudflare) : les images et PDF
+    # sont d'abord lus par Gemini, puis le texte est transmis au modèle.
+    # Clé à saisir dans l'interface : clé_deepseek,clé_gemini (séparées par une virgule).
+    # Noms affichés : « Aube » (rapide, économique) et « Soleil » (le grand modèle, environ 3 fois plus cher).
+    # titleConvo DÉSACTIVÉ : la génération de titre est une requête supplémentaire.
+    # Historique résumé et limite de sortie AUTOMATIQUE : voir patch-history-limit.js
+    # (réponse limitée à 1200 tokens, sans limite dès que le message demande du code).
+    - name: "Jérémy"
+      apiKey: "user_provided"
+      baseURL: "https://vision-bridge.hounmetinjeremy.workers.dev/v1"
+      models:
+        default: ["Aube", "Soleil"]
+        fetch: false
+      titleConvo: false
+      addParams:
+        temperature: 0.2
+      modelDisplayLabel: "Jérémy"
+      iconURL: "/assets/jeremy-logo.svg"
+
+    - name: "Jérémy GPU"
+      apiKey: "user_provided"
+      baseURL: "https://g64203490--deepseek-api-serve.us-east.modal.run/v1"
+      models:
+        default: ["deepseek-r1"]
+        fetch: false
+      titleConvo: false
+      modelDisplayLabel: "Jérémy GPU"
+      iconURL: "/assets/jeremy-logo.svg"
+
+    - name: "Vidéo"
+      apiKey: "user_provided"
+      baseURL: "https://g64203490--ltx-2-5-mcp.us-east.modal.run/v1"
+      models:
+        default: ["video-12s", "video-24s", "video-36s", "video-48s", "video-60s"]
+        fetch: false
+      titleConvo: false
+      modelDisplayLabel: "Vidéo"
+      iconURL: "/assets/jeremy-logo.svg"
+
+mcpServers:
+  cloudflare:
+    type: streamable-http
+    url: https://mcp.cloudflare.com/mcp
+    requiresOAuth: true
+    timeout: 60000
+
+  github:
+    type: streamable-http
+    url: https://github-mcp-lite.hounmetinjeremy.workers.dev
+    requiresOAuth: true
+    timeout: 60000
+
+  # Correction de bugs : cherche les fichiers, une seule requête au modèle, pull request.
+  # Une correction peut durer 1 à 2 minutes (copie du dépôt + modèle + envoi).
+  dev-fix:
+    type: streamable-http
+    url: http://dev-fix:3000/mcp
+    headers:
+      Authorization: "Bearer ${MCP_SECRET}"
+    timeout: 180000
