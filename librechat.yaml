@@ -1,6 +1,8 @@
 version: 1.2.1
 
 interface:
+  # Sélecteur de modèle direct : seuls « Aube » et « Soleil » apparaissent (voir modelSpecs plus bas).
+  modelSelect: true
   mcpServers:
     use: true
     create: true
@@ -15,8 +17,9 @@ endpoints:
 
   custom:
     # Les utilisateurs ne voient que « Aube » et « Soleil ».
-    # Le fournisseur (DeepSeek ou Gemini), le vrai modèle et la clé de chacun se règlent dans la
-    # page admin « Clés API » (compte ADMIN). LibreChat appelle sa propre route interne /ai-proxy
+    # Le fournisseur (DeepSeek ou Gemini), le vrai modèle et les clés se règlent dans la
+    # page admin « Clés API » (compte ADMIN). Si une clé échoue, le serveur bascule tout seul
+    # sur l'autre. LibreChat appelle sa propre route interne /ai-proxy
     # (api/server/routes/aiModels.js), qui lit ces réglages et transmet au bon fournisseur.
     # Les images et PDF sont d'abord lus par Gemini, puis le texte est transmis au modèle.
     # apiKey : valeur factice obligatoire pour LibreChat ; la vraie clé n'est jamais ici.
@@ -46,6 +49,7 @@ endpoints:
     # minutes ; le lien apparaît dans la réponse.
     # Clé fournie par le serveur (secret Fly VIDEO_API_KEY ; jamais écrite ici : dépôt public).
     # titleConvo désactivé : un titre automatique lancerait une génération vidéo.
+    # Cet accès n'apparaît plus dans le sélecteur de l'interface (voir modelSpecs).
     - name: "Vidéo"
       apiKey: "${VIDEO_API_KEY}"
       baseURL: "https://g64203490--ltx-2-5-mcp.us-east.modal.run/v1"
@@ -55,6 +59,26 @@ endpoints:
       titleConvo: false
       modelDisplayLabel: "Vidéo"
       iconURL: "/assets/jeremy-logo.svg"
+
+# Sélecteur direct : un seul bouton avec « Aube » et « Soleil », sans niveau « Modèles » ni « Vidéo ».
+# Aube est présélectionné pour toute nouvelle conversation.
+modelSpecs:
+  enforce: true
+  prioritize: true
+  list:
+    - name: "aube"
+      label: "Aube"
+      default: true
+      iconURL: "/assets/jeremy-logo.svg"
+      preset:
+        endpoint: "Modèles"
+        model: "Aube"
+    - name: "soleil"
+      label: "Soleil"
+      iconURL: "/assets/jeremy-logo.svg"
+      preset:
+        endpoint: "Modèles"
+        model: "Soleil"
 
 mcpServers:
   cloudflare:

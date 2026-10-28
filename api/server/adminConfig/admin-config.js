@@ -7,6 +7,7 @@
     { id: 'deepseek', label: 'DeepSeek' },
     { id: 'gemini', label: 'Gemini (Google)' }
   ];
+  var LABEL = { deepseek: 'DeepSeek', gemini: 'Gemini' };
   var MODELS = {
     deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
     gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.5-flash']
@@ -84,42 +85,52 @@
     (MODELS[provider] || []).forEach(function (m) { list.appendChild(el('option', { value: m })); });
   }
 
+  /* Clés : on peut en mettre plusieurs, le serveur bascule tout seul de l’une à l’autre. */
+  function buildKeys() {
+    var deepseek = keyField('deepseek', 'Clé DeepSeek', 'Utilisée par Aube et Soleil.', function () {
+      return api('/api/admin-models', 'PUT', { keys: { deepseek: null } }).then(renderModels);
+    });
+    var gemini = keyField('gemini', 'Clé Gemini (Google)', 'Utilisée par Aube et Soleil, et pour lire les images et PDF.', function () {
+      return api('/api/admin-models', 'PUT', { keys: { gemini: null } }).then(renderModels);
+    });
+    fieldsBox.appendChild(el('div', { className: 'card' }, [
+      el('h2', { textContent: 'Clés API' }),
+      el('div', { className: 'help', textContent: 'Ajoute les clés que tu as. Si l’une est refusée, vide ou en panne, le serveur bascule automatiquement sur l’autre. Aube et Soleil marchent avec n’importe laquelle.' }),
+      deepseek.wrap,
+      gemini.wrap
+    ]));
+    refs.keys = { deepseek: deepseek, gemini: gemini };
+  }
+
   function buildRole(role) {
     var provider = el('select', {}, PROVIDERS.map(function (p) { return el('option', { value: p.id, textContent: p.label }); }));
     var model = el('input', { type: 'text', autocomplete: 'off', autocapitalize: 'off', spellcheck: false });
     var list = el('datalist', { id: 'models-' + role.id });
     model.setAttribute('list', list.id);
+    var chain = el('div', { className: 'state' });
     provider.addEventListener('change', function () {
       fillModels(list, provider.value);
       model.value = (MODELS[provider.value] || [''])[0];
     });
-    var key = keyField(role.id, 'Clé du fournisseur', 'Utilisée seulement pour ' + role.title + '.', function () {
-      var b = {}; b[role.id] = { key: null };
-      return api('/api/admin-models', 'PUT', b).then(renderModels);
-    });
     var card = el('div', { className: 'card' }, [
       el('h2', { textContent: role.title }),
-      el('div', { className: 'help', textContent: role.help + ' Ce que tu choisis ici, c’est ce qui répond quand l’utilisateur choisit « ' + role.title + ' ».' }),
-      el('div', { className: 'field' }, [el('label', { textContent: 'Fournisseur' }), provider]),
+      el('div', { className: 'help', textContent: role.help + ' Fournisseur essayé en premier ; si sa clé échoue, l’autre prend le relais.' }),
+      el('div', { className: 'field' }, [el('label', { textContent: 'Fournisseur préféré' }), provider]),
       el('div', { className: 'field' }, [el('label', { textContent: 'Modèle' }), model, list]),
-      key.wrap
+      chain
     ]);
     fieldsBox.appendChild(card);
-    refs[role.id] = { provider: provider, model: model, list: list, key: key };
+    refs[role.id] = { provider: provider, model: model, list: list, chain: chain };
   }
 
   function buildVision() {
     var model = el('input', { type: 'text', autocomplete: 'off', autocapitalize: 'off', spellcheck: false });
-    var key = keyField('vision', 'Clé Gemini', 'Si vide et qu’un modèle utilise Gemini, sa clé sert aussi à lire les images et PDF.', function () {
-      return api('/api/admin-models', 'PUT', { vision: { key: null } }).then(renderModels);
-    });
     fieldsBox.appendChild(el('div', { className: 'card' }, [
       el('h2', { textContent: 'Lecture des images et PDF' }),
-      el('div', { className: 'help', textContent: 'Gemini lit les pièces jointes puis transmet le texte au modèle choisi.' }),
-      key.wrap,
+      el('div', { className: 'help', textContent: 'Gemini lit les pièces jointes puis transmet le texte au modèle choisi (utilise la clé Gemini ci-dessus).' }),
       el('div', { className: 'field' }, [el('label', { textContent: 'Modèle Gemini de lecture' }), model])
     ]));
-    refs.vision = { model: model, key: key };
+    refs.vision = { model: model };
   }
 
   function buildVideo() {
@@ -137,11 +148,20 @@
       r.provider.value = d.provider || 'deepseek';
       fillModels(r.list, r.provider.value);
       r.model.value = d.model || '';
-      showState(r.key, d);
+      var chain = d.chain || [];
+      if (chain.length) {
+        r.chain.textContent = 'Ordre d’essai : ' + chain.map(function (p) { return LABEL[p] || p; }).join(' → ');
+        r.chain.className = 'state ok';
+      } else {
+        r.chain.textContent = 'Aucune clé disponible : ajoute une clé ci-dessus';
+        r.chain.className = 'state';
+      }
     });
+    var keys = data.keys || {};
+    showState(refs.keys.deepseek, keys.deepseek);
+    showState(refs.keys.gemini, keys.gemini);
     var v = data.vision || {};
     refs.vision.model.value = v.model || '';
-    showState(refs.vision.key, v);
   }
 
   function renderVideo(data) {
@@ -164,18 +184,17 @@
   }
 
   saveBtn.addEventListener('click', function () {
-    var body = { vision: {} };
+    var body = { vision: {}, keys: {} };
     ROLES.forEach(function (role) {
       var r = refs[role.id];
-      var item = { provider: r.provider.value, model: r.model.value.trim() };
-      var k = r.key.input.value.trim();
-      if (k) { item.key = k; }
-      body[role.id] = item;
+      body[role.id] = { provider: r.provider.value, model: r.model.value.trim() };
+    });
+    ['deepseek', 'gemini'].forEach(function (p) {
+      var k = refs.keys[p].input.value.trim();
+      if (k) { body.keys[p] = k; }
     });
     var vm = refs.vision.model.value.trim();
     if (vm) { body.vision.model = vm; }
-    var vk = refs.vision.key.input.value.trim();
-    if (vk) { body.vision.key = vk; }
     var videoKey = refs.video.key.input.value.trim();
     saveBtn.disabled = true;
     setStatus('Enregistrement…');
@@ -203,7 +222,8 @@
         if (!data || !data.token || !data.user) { showLoginNeeded('Connecte-toi d’abord avec ton compte administrateur.', code); return null; }
         if (data.user.role !== 'ADMIN') { intro.textContent = 'Cette page est réservée au compte administrateur.'; return null; }
         token = data.token;
-        intro.textContent = 'Choisis pour Aube et Soleil le fournisseur, le modèle et la clé. Les utilisateurs voient seulement « Aube » et « Soleil ».';
+        intro.textContent = 'Ajoute tes clés API (plusieurs possibles : bascule automatique) et choisis le modèle d’Aube et de Soleil. Les utilisateurs voient seulement « Aube » et « Soleil ».';
+        buildKeys();
         ROLES.forEach(buildRole);
         buildVision();
         buildVideo();

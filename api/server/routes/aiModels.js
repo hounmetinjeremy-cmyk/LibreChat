@@ -1,6 +1,8 @@
 /**
  * Modèles « Aube » et « Soleil » réglés depuis la page admin (/admin-config).
- * - Pour chacun : fournisseur (DeepSeek ou Gemini), vrai modèle et clé, enregistrés chiffrés en base.
+ * - Les clés (DeepSeek, Gemini) sont enregistrées chiffrées en base. Chaque rôle a un fournisseur
+ *   préféré et un modèle. Si ce fournisseur n'a pas de clé, ou s'il échoue (clé refusée, solde
+ *   épuisé, quota, panne), le serveur BASCULE AUTOMATIQUEMENT sur l'autre clé disponible.
  * - Route interne /ai-proxy/v1 : LibreChat l'appelle sur le serveur lui-même (127.0.0.1), elle lit
  *   la config, lit les images/PDF avec Gemini si besoin, puis transmet au bon fournisseur.
  * - Les utilisateurs ne voient que « Aube » et « Soleil », jamais le fournisseur ni la clé.
@@ -14,6 +16,7 @@ const requireJwtAuth = require('../middleware/requireJwtAuth');
 
 const ROLES = ['aube', 'soleil'];
 const LABELS = { aube: 'Aube', soleil: 'Soleil' };
+const PROVIDER_LABELS = { deepseek: 'DeepSeek', gemini: 'Gemini' };
 const PROVIDERS = {
   deepseek: 'https://api.deepseek.com/v1/chat/completions',
   gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
@@ -21,6 +24,11 @@ const PROVIDERS = {
 const DEFAULTS = {
   aube: { provider: 'deepseek', model: 'deepseek-v4-flash' },
   soleil: { provider: 'deepseek', model: 'deepseek-v4-pro' },
+};
+/** Modèle utilisé pour chaque rôle quand on bascule sur un autre fournisseur. */
+const AUTO_MODELS = {
+  aube: { deepseek: 'deepseek-v4-flash', gemini: 'gemini-2.5-flash' },
+  soleil: { deepseek: 'deepseek-v4-pro', gemini: 'gemini-2.5-pro' },
 };
 const DEFAULT_VISION_MODEL = 'gemini-2.5-flash';
 const GEMINI_NATIVE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -73,7 +81,7 @@ function decrypt(stored) {
 let cache = null;
 let cacheAt = 0;
 
-/** Relit la config en base (cache de 15 s : plusieurs machines Fly restent synchronisées). */
+/** Relit la config en base (cache de 15 s : plusieurs machines restent synchronisées). */
 async function loadConfig(force) {
   if (!force && cache && Date.now() - cacheAt < 15000) {
     return cache;
@@ -107,7 +115,7 @@ async function saveConfig(cfg) {
 
 const real = (v) => (v && v !== 'user_provided' ? v : '');
 
-/** Anciennes clés (page Clés API d'avant, ou secrets Fly) : servent de secours tant que rien n'est saisi. */
+/** Anciennes clés (secrets Fly) : servent de secours tant que rien n'est saisi. */
 function fallbackKeys() {
   const pair = (process.env.JEREMY_API_KEY || '').split(',').map((s) => s.trim());
   return {
@@ -116,32 +124,76 @@ function fallbackKeys() {
   };
 }
 
-function resolveRole(cfg, role) {
+/* ---------- clés et bascule automatique ---------- */
+
+/** Le nom du modèle correspond-il au fournisseur ? (évite « deepseek-… » envoyé à Gemini) */
+function modelFits(provider, model) {
+  if (!model) {
+    return false;
+  }
+  return provider === 'gemini' ? /^gemini/i.test(model) : !/^gemini/i.test(model);
+}
+
+/** Meilleure clé connue pour un fournisseur : réserve de clés, anciennes clés de rôle, secours. */
+function poolKey(cfg, provider) {
+  if (cfg.keys && cfg.keys[provider]) {
+    return cfg.keys[provider];
+  }
+  for (const role of ROLES) {
+    const c = cfg[role];
+    if (c && c.provider === provider && c.key) {
+      return c.key;
+    }
+  }
+  if (provider === 'gemini' && cfg.vision && cfg.vision.key) {
+    return cfg.vision.key;
+  }
+  return fallbackKeys()[provider] || '';
+}
+
+function preferredProvider(cfg, role) {
   const c = cfg[role] || {};
-  const provider = PROVIDERS[c.provider] ? c.provider : DEFAULTS[role].provider;
-  const model = c.model || (provider === DEFAULTS[role].provider ? DEFAULTS[role].model : '');
-  const key = c.key || fallbackKeys()[provider] || '';
-  return { provider, model, key };
+  return PROVIDERS[c.provider] ? c.provider : DEFAULTS[role].provider;
+}
+
+function roleModel(cfg, role, provider) {
+  const c = cfg[role] || {};
+  if (provider === preferredProvider(cfg, role) && modelFits(provider, c.model)) {
+    return c.model;
+  }
+  return AUTO_MODELS[role][provider];
+}
+
+/** Liste ordonnée des essais : fournisseur préféré d'abord, puis tous les autres qui ont une clé. */
+function candidatesFor(cfg, role) {
+  const preferred = preferredProvider(cfg, role);
+  const order = [preferred].concat(Object.keys(PROVIDERS).filter((p) => p !== preferred));
+  const out = [];
+  for (const provider of order) {
+    const key = poolKey(cfg, provider);
+    if (!key) {
+      continue;
+    }
+    out.push({ provider, model: roleModel(cfg, role, provider), key });
+  }
+  return out;
 }
 
 function resolveVision(cfg) {
   const v = cfg.vision || {};
-  const model = v.model || DEFAULT_VISION_MODEL;
-  let key = v.key || '';
-  if (!key) {
-    for (const role of ROLES) {
-      const r = resolveRole(cfg, role);
-      if (r.provider === 'gemini' && r.key) {
-        key = r.key;
-        break;
-      }
-    }
-  }
-  if (!key) {
-    key = fallbackKeys().gemini;
-  }
-  return { key, model };
+  return { key: v.key || poolKey(cfg, 'gemini') || '', model: v.model || DEFAULT_VISION_MODEL };
 }
+
+/** Faut-il essayer la clé suivante ? (clé refusée, solde épuisé, quota, modèle inconnu, panne) */
+const shouldSwitch = (status) =>
+  status === 400 ||
+  status === 401 ||
+  status === 402 ||
+  status === 403 ||
+  status === 404 ||
+  status === 408 ||
+  status === 429 ||
+  status >= 500;
 
 /* ---------- lecture des images et PDF (par Gemini) ---------- */
 
@@ -272,22 +324,11 @@ async function handleChat(req, res) {
     const asked = String(body.model || '').trim().toLowerCase();
     const role = ROLES.includes(asked) ? asked : 'aube';
     const cfg = await loadConfig();
-    const target = resolveRole(cfg, role);
-    if (!target.key) {
+    const candidates = candidatesFor(cfg, role);
+    if (candidates.length === 0) {
       return res
         .status(401)
-        .json(err(`Clé manquante pour « ${LABELS[role]} » : à renseigner dans la page admin « Clés API ».`));
-    }
-    if (!target.model) {
-      return res
-        .status(400)
-        .json(err(`Modèle manquant pour « ${LABELS[role]} » : à renseigner dans la page admin « Clés API ».`));
-    }
-    body.model = target.model;
-    // Précaution Gemini : une limite de sortie très basse (1200) peut couper ou vider la réponse
-    // des modèles qui « réfléchissent » avant de répondre.
-    if (target.provider === 'gemini' && typeof body.max_tokens === 'number') {
-      body.max_tokens = Math.max(body.max_tokens, 4096);
+        .json(err('Aucune clé API enregistrée : à renseigner dans la page admin « Clés API ».'));
     }
     body.messages = await convertMessages(body.messages, resolveVision(cfg));
 
@@ -297,12 +338,48 @@ async function handleChat(req, res) {
         ctrl.abort();
       }
     });
-    const up = await fetch(PROVIDERS[target.provider], {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${target.key}` },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    });
+
+    let up = null;
+    for (let i = 0; i < candidates.length; i++) {
+      const c = candidates[i];
+      const isLast = i === candidates.length - 1;
+      const payload = { ...body, model: c.model };
+      // Gemini : une limite de sortie trop basse peut couper ou vider la réponse.
+      if (c.provider === 'gemini' && typeof payload.max_tokens === 'number') {
+        payload.max_tokens = Math.max(payload.max_tokens, 4096);
+      }
+      try {
+        up = await fetch(PROVIDERS[c.provider], {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${c.key}` },
+          body: JSON.stringify(payload),
+          signal: ctrl.signal,
+        });
+      } catch (e) {
+        if (ctrl.signal.aborted) {
+          return res.end();
+        }
+        logger.warn(`[aiModels] ${PROVIDER_LABELS[c.provider]} injoignable pour « ${LABELS[role]} »`);
+        if (isLast) {
+          throw e;
+        }
+        continue;
+      }
+      if (up.ok || !shouldSwitch(up.status) || isLast) {
+        break;
+      }
+      logger.warn(
+        `[aiModels] ${PROVIDER_LABELS[c.provider]} a répondu ${up.status} pour « ${LABELS[role]} » : bascule sur la clé suivante`,
+      );
+      try {
+        if (up.body) {
+          await up.body.cancel();
+        }
+      } catch (e) {
+        /* ignoré */
+      }
+    }
+
     res.status(up.status);
     res.set('content-type', up.headers.get('content-type') || 'application/json');
     if (!up.body) {
@@ -348,14 +425,21 @@ function describeConfig(cfg) {
   const fb = fallbackKeys();
   const out = {};
   for (const role of ROLES) {
-    const r = resolveRole(cfg, role);
-    const stored = (cfg[role] && cfg[role].key) || '';
+    const provider = preferredProvider(cfg, role);
     out[role] = {
-      provider: r.provider,
-      model: r.model,
+      provider,
+      model: roleModel(cfg, role, provider),
+      chain: candidatesFor(cfg, role).map((c) => c.provider),
+    };
+  }
+  out.keys = {};
+  for (const provider of Object.keys(PROVIDERS)) {
+    const stored = (cfg.keys && cfg.keys[provider]) || '';
+    const any = stored || poolKey(cfg, provider);
+    out.keys[provider] = {
       set: Boolean(stored),
-      hint: hintOf(stored),
-      viaServer: !stored && Boolean(fb[r.provider]),
+      hint: hintOf(stored || any),
+      viaServer: !stored && Boolean(any || fb[provider]),
     };
   }
   const v = cfg.vision || {};
@@ -416,6 +500,31 @@ adminRouter.put('/api/admin-models', requireJwtAuth, requireAdmin, async (req, r
     const problem = apply('vision', body.vision, false);
     if (problem) {
       return res.status(400).json({ message: problem });
+    }
+    if (body.keys && typeof body.keys === 'object') {
+      for (const provider of Object.keys(PROVIDERS)) {
+        const v = body.keys[provider];
+        if (v === null) {
+          if (cfg.keys) {
+            delete cfg.keys[provider];
+          }
+          // Efface aussi les anciennes copies de cette clé, sinon elle resterait active.
+          for (const role of ROLES) {
+            if (cfg[role] && cfg[role].provider === provider) {
+              delete cfg[role].key;
+            }
+          }
+          if (provider === 'gemini' && cfg.vision) {
+            delete cfg.vision.key;
+          }
+        } else if (typeof v === 'string' && v.trim()) {
+          if (v.trim().length > MAX_KEY_LENGTH) {
+            return res.status(400).json({ message: `Clé « ${PROVIDER_LABELS[provider]} » trop longue` });
+          }
+          cfg.keys = cfg.keys || {};
+          cfg.keys[provider] = v.trim();
+        }
+      }
     }
     await saveConfig(cfg);
     res.set('Cache-Control', 'no-store');
