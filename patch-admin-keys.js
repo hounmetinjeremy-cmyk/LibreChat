@@ -6,13 +6,14 @@ require('./patch-google-link.js');
 require('./patch-identity.js');
 require('./patch-admin-link.js');
 require('./patch-ai-models.js');
+require('./patch-placeholder.js');
 
 const fs = require('fs');
 
 const file = 'api/server/index.js';
 let src = fs.readFileSync(file, 'utf8');
 
-if (src.includes("./routes/adminKeys")) {
+if (src.includes('./routes/adminKeys')) {
   console.log('patch-admin-keys : déjà appliqué');
   process.exit(0);
 }
