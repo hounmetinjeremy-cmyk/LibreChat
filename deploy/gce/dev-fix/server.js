@@ -6,31 +6,20 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const run = promisify(execFile);
 
-// Chaque utilisateur a SON dev : son token GitHub, ses dépôts, son espace de travail,
-// et son budget de tokens par mois pour les corrections (FIX_BUDGET_USD).
+// Agent de développement, un par utilisateur : son token GitHub, ses dépôts, son espace de travail
+// et son budget de tokens par mois. Boucle côté serveur : chercher, lire, modifier, recommencer,
+// puis pull request. Le chat n'appelle l'outil qu'une fois.
 const SECRET = process.env.MCP_SECRET || '';
 const DS_KEY = process.env.DEEPSEEK_API_KEY || '';
 const DS_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
 const MAX_PARALLEL = parseInt(process.env.MAX_PARALLEL || '3', 10);
+const MAX_STEPS = parseInt(process.env.AGENT_MAX_STEPS || '12', 10);
 const FIX_BUDGET = parseFloat(process.env.FIX_BUDGET_USD || '1');
 const PRICE_IN = parseFloat(process.env.DS_PRICE_IN || '0.14'); // dollars par million de tokens d'entrée
 const PRICE_OUT = parseFloat(process.env.DS_PRICE_OUT || '0.28'); // dollars par million de tokens de sortie
 const DATA = '/data/repos';
 const USAGE_FILE = '/data/usage.json';
-const MAX_FILES = 3;
-const MAX_CHARS = 12000;
 
-const SYN = {
-  paiement: ['pay', 'paiement', 'payment', 'fedapay', 'checkout'],
-  payment: ['pay', 'paiement', 'payment', 'fedapay', 'checkout'],
-  connexion: ['login', 'auth', 'signin', 'connexion'],
-  login: ['login', 'auth', 'signin', 'connexion'],
-  retrait: ['withdraw', 'retrait', 'payout'],
-  email: ['mail', 'email', 'smtp'],
-};
-const STOP = new Set(['dans', 'avec', 'pour', 'mais', 'une', 'des', 'les', 'que', 'qui', 'pas', 'sur', 'mon', 'ton', 'est', 'the', 'and', 'problème', 'probleme', 'bug', 'erreur']);
-
-const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const b64 = (token) => Buffer.from('x-access-token:' + token).toString('base64');
 const git = (args, cwd, token) =>
   run('git', [...(token ? ['-c', 'http.extraHeader=Authorization: Basic ' + b64(token)] : []), ...args], { cwd, maxBuffer: 20 * 1024 * 1024 });
@@ -93,21 +82,6 @@ function cleanup() {
   }
 }
 
-function keywords(problem) {
-  const words = problem
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .split(/[^a-z0-9]+/)
-    .filter((w) => w.length >= 3 && !STOP.has(w));
-  const out = new Set();
-  for (const w of words) {
-    out.add(w);
-    (SYN[w] || []).forEach((s) => out.add(s));
-  }
-  return [...out].slice(0, 12);
-}
-
 async function sync(dir, owner, repo, token) {
   if (!fs.existsSync(path.join(dir, '.git'))) {
     fs.mkdirSync(path.dirname(dir), { recursive: true });
@@ -122,53 +96,126 @@ async function sync(dir, owner, repo, token) {
   return base;
 }
 
-async function findFiles(dir, kws) {
-  const re = kws.map(esc).join('|');
-  const scores = {};
-  try {
-    const { stdout } = await git(['grep', '-c', '-i', '-I', '-E', re, '--', '.', ':(exclude)*lock*', ':(exclude)*.min.*'], dir);
-    for (const line of stdout.split('\n')) {
-      const i = line.lastIndexOf(':');
-      if (i > 0) scores[line.slice(0, i)] = parseInt(line.slice(i + 1), 10) || 0;
-    }
-  } catch (e) {
-    /* aucun résultat */
-  }
-  const { stdout: ls } = await git(['ls-files'], dir);
-  const nameRe = new RegExp(re, 'i');
-  for (const f of ls.split('\n')) if (f && nameRe.test(f)) scores[f] = (scores[f] || 0) + 5;
-  return Object.entries(scores)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, MAX_FILES)
-    .map(([p]) => p);
+// --- outils de l'agent (résultats volontairement courts pour garder le coût bas) ---
+const TOOLDEFS = [
+  {
+    type: 'function',
+    function: {
+      name: 'search_code',
+      description: 'Cherche un mot ou une expression dans le code du dépôt. Renvoie fichier:ligne:texte (25 résultats maximum).',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_files',
+      description: 'Liste les fichiers dont le chemin contient un texte (40 maximum).',
+      parameters: { type: 'object', properties: { contains: { type: 'string' } }, required: ['contains'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_file',
+      description: 'Lit un fichier avec numéros de ligne. Par défaut les lignes 1 à 120. Précise start et end pour lire ailleurs.',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string' }, start: { type: 'integer' }, end: { type: 'integer' } },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_file',
+      description: 'Remplace un texte EXACT qui apparaît une seule fois dans un fichier. Garde le texte à remplacer court mais unique.',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string' }, search: { type: 'string' }, replace: { type: 'string' } },
+        required: ['path', 'search', 'replace'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'finish',
+      description: 'Termine la tâche. Donne un résumé de 2 phrases : la cause et ce qui a été changé (ou ce qui manque).',
+      parameters: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] },
+    },
+  },
+];
+
+const SYSTEM =
+  'Tu es un développeur expert qui corrige un bug dans un dépôt Git. Méthode : cherche avec search_code ou list_files, lis seulement ce qui est utile avec read_file, corrige avec edit_file en changeant le minimum de lignes, puis appelle finish avec un résumé de 2 phrases. Ne relis pas un fichier déjà lu. Si tu ne peux pas corriger, appelle finish et explique ce qui manque. Tu as au maximum ' +
+  MAX_STEPS +
+  ' étapes.';
+
+function safePath(dir, p) {
+  const full = path.resolve(dir, String(p || ''));
+  const rel = path.relative(dir, full);
+  if (!rel || rel.startsWith('..') || rel.startsWith('.git') || path.isAbsolute(rel)) return null;
+  return full;
 }
 
-async function ask(problem, files) {
-  const userContent = `Problème : ${problem}\n\n` + files.map((f) => `### ${f.path}\n${f.text}`).join('\n\n');
-  const body = {
-    model: DS_MODEL,
-    temperature: 0,
-    max_tokens: 2000,
-    response_format: { type: 'json_object' },
-    messages: [
-      {
-        role: 'system',
-        content:
-          'Tu es un développeur expert. On te donne un problème et des extraits de fichiers. Réponds en JSON strict : {"explanation":"2 phrases","edits":[{"file":"chemin","search":"texte EXACT existant, court mais unique","replace":"nouveau texte"}]}. Modifie le minimum de lignes. Si tu ne peux pas corriger avec ces fichiers, mets edits=[] et explique quel fichier il faudrait voir.',
-      },
-      { role: 'user', content: userContent },
-    ],
-  };
+async function execTool(name, args, dir, changed) {
+  try {
+    if (name === 'search_code') {
+      const q = String(args.query || '').slice(0, 120);
+      if (!q) return 'Recherche vide.';
+      try {
+        const { stdout } = await git(['grep', '-n', '-i', '-I', '-F', '-e', q, '--', '.', ':(exclude)*lock*', ':(exclude)*.min.*'], dir);
+        const lines = stdout.split('\n').filter(Boolean);
+        return lines.slice(0, 25).map((l) => l.slice(0, 200)).join('\n') + (lines.length > 25 ? `\n... ${lines.length - 25} autres résultats` : '');
+      } catch (e) {
+        return 'Aucun résultat.';
+      }
+    }
+    if (name === 'list_files') {
+      const c = String(args.contains || '').toLowerCase();
+      const { stdout } = await git(['ls-files'], dir);
+      const files = stdout.split('\n').filter((f) => f && f.toLowerCase().includes(c));
+      return files.slice(0, 40).join('\n') || 'Aucun fichier.';
+    }
+    if (name === 'read_file') {
+      const full = safePath(dir, args.path);
+      if (!full || !fs.existsSync(full)) return 'Fichier introuvable.';
+      const lines = fs.readFileSync(full, 'utf8').split('\n');
+      const start = Math.max(1, parseInt(args.start || 1, 10));
+      const end = Math.min(lines.length, parseInt(args.end || start + 119, 10), start + 199);
+      const out = lines.slice(start - 1, end).map((l, i) => `${start + i}: ${l}`).join('\n').slice(0, 6000);
+      return `${args.path} (${lines.length} lignes, affichage ${start}-${end})\n${out}`;
+    }
+    if (name === 'edit_file') {
+      const full = safePath(dir, args.path);
+      if (!full || !fs.existsSync(full)) return 'Fichier introuvable.';
+      const content = fs.readFileSync(full, 'utf8');
+      const search = String(args.search || '');
+      const count = search ? content.split(search).length - 1 : 0;
+      if (count !== 1) return `Échec : le texte à remplacer doit apparaître exactement une fois (trouvé ${count} fois).`;
+      fs.writeFileSync(full, content.replace(search, () => String(args.replace ?? '')));
+      changed.add(String(args.path));
+      return 'Modification appliquée.';
+    }
+    return 'Outil inconnu.';
+  } catch (e) {
+    return 'Erreur : ' + String(e.message || e).slice(0, 150);
+  }
+}
+
+async function chat(messages) {
   const r = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + DS_KEY },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ model: DS_MODEL, temperature: 0, max_tokens: 1500, tools: TOOLDEFS, tool_choice: 'auto', messages }),
   });
   const j = await r.json();
-  const tokensIn = (j.usage && j.usage.prompt_tokens) || Math.ceil(userContent.length / 4);
-  const tokensOut = (j.usage && j.usage.completion_tokens) || 500;
-  const usd = (tokensIn * PRICE_IN + tokensOut * PRICE_OUT) / 1e6;
-  return { answer: JSON.parse(j.choices[0].message.content), usd };
+  if (!j.choices) throw new Error('Réponse du modèle invalide : ' + JSON.stringify(j).slice(0, 150));
+  const tokensIn = (j.usage && j.usage.prompt_tokens) || 4000;
+  const tokensOut = (j.usage && j.usage.completion_tokens) || 300;
+  return { msg: j.choices[0].message, usd: (tokensIn * PRICE_IN + tokensOut * PRICE_OUT) / 1e6 };
 }
 
 async function devFix(ctx, repoArg, problem) {
@@ -193,32 +240,54 @@ async function devFix(ctx, repoArg, problem) {
     const dir = path.join(DATA, userKey, owner, repo);
     const base = await sync(dir, owner, repo, token);
     fs.utimesSync(dir, new Date(), new Date());
-    const kws = keywords(problem);
-    const names = await findFiles(dir, kws);
-    if (names.length === 0) return `Aucun fichier trouvé pour : ${kws.join(', ')}. Reformule avec un mot du code (ex : fedapay, login).`;
-    const files = names.map((p) => ({ path: p, text: fs.readFileSync(path.join(dir, p), 'utf8').slice(0, MAX_CHARS) }));
-    const { answer, usd } = await ask(problem, files);
-    addSpent(userKey, usd);
-    const left = `Budget corrections restant ce mois : ${Math.max(0, FIX_BUDGET - spent(userKey)).toFixed(2)} $`;
-    const applied = [];
-    const failed = [];
-    for (const e of answer.edits || []) {
-      if (!names.includes(e.file)) {
-        failed.push(e.file);
-        continue;
+
+    const messages = [
+      { role: 'system', content: SYSTEM },
+      { role: 'user', content: `Dépôt : ${owner}/${repo}\nProblème : ${problem}` },
+    ];
+    const changed = new Set();
+    let summary = '';
+    let steps = 0;
+    let stopReason = '';
+
+    for (; steps < MAX_STEPS; steps++) {
+      if (spent(userKey) >= FIX_BUDGET) {
+        stopReason = 'Budget du mois atteint, arrêt.';
+        break;
       }
-      const full = path.join(dir, e.file);
-      const content = fs.readFileSync(full, 'utf8');
-      if (e.search && content.split(e.search).length === 2) {
-        fs.writeFileSync(full, content.replace(e.search, () => e.replace));
-        applied.push(e.file);
-      } else {
-        failed.push(e.file);
+      const { msg, usd } = await chat(messages);
+      addSpent(userKey, usd);
+      messages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls });
+      if (!msg.tool_calls || msg.tool_calls.length === 0) {
+        summary = msg.content || '';
+        break;
       }
+      let done = false;
+      for (const call of msg.tool_calls) {
+        let args = {};
+        try {
+          args = JSON.parse(call.function.arguments || '{}');
+        } catch (e) {
+          args = {};
+        }
+        let result;
+        if (call.function.name === 'finish') {
+          summary = String(args.summary || '');
+          result = 'Terminé.';
+          done = true;
+        } else {
+          result = await execTool(call.function.name, args, dir, changed);
+        }
+        messages.push({ role: 'tool', tool_call_id: call.id, content: result });
+      }
+      if (done) break;
     }
-    if (applied.length === 0) {
-      return `${answer.explanation || ''}\nAucune modification appliquée. Fichiers regardés : ${names.join(', ')}.\n${left}`;
-    }
+    if (!summary && !stopReason && steps >= MAX_STEPS) stopReason = `Limite de ${MAX_STEPS} étapes atteinte.`;
+
+    const left = `Étapes : ${Math.min(steps + 1, MAX_STEPS)} | Budget corrections restant ce mois : ${Math.max(0, FIX_BUDGET - spent(userKey)).toFixed(2)} $`;
+    const note = [summary, stopReason].filter(Boolean).join('\n');
+    if (changed.size === 0) return `${note || 'Aucune modification.'}\nAucun fichier modifié.\n${left}`;
+
     const branch = 'devfix/' + Date.now();
     await git(['checkout', '-b', branch], dir);
     await git(['add', '-A'], dir);
@@ -226,9 +295,9 @@ async function devFix(ctx, repoArg, problem) {
     await git(['push', 'origin', branch], dir, token);
     const pr = await gh(token, `/repos/${owner}/${repo}/pulls`, {
       method: 'POST',
-      body: JSON.stringify({ title: 'dev-fix: ' + problem.slice(0, 60), head: branch, base, body: answer.explanation || '' }),
+      body: JSON.stringify({ title: 'dev-fix: ' + problem.slice(0, 60), head: branch, base, body: note }),
     });
-    return `${answer.explanation || ''}\nFichiers modifiés : ${applied.join(', ')}${failed.length ? '\nNon appliqués : ' + failed.join(', ') : ''}\nPull request : ${pr.html_url || scrub(JSON.stringify(pr).slice(0, 200), token)}\n${left}`;
+    return `${note}\nFichiers modifiés : ${[...changed].join(', ')}\nPull request : ${pr.html_url || scrub(JSON.stringify(pr).slice(0, 200), token)}\n${left}`;
   } catch (e) {
     return 'Erreur : ' + scrub(String(e.stderr || e.message || e).slice(0, 300), token);
   } finally {
@@ -241,7 +310,7 @@ const TOOLS = [
   {
     name: 'dev_fix',
     description:
-      'Corrige un bug dans un de TES dépôts GitHub : cherche les fichiers concernés, propose la correction et ouvre une pull request. Entrée : repo (nom du dépôt, ou proprietaire/nom), problem (le problème en une ou deux phrases).',
+      'Agent développeur : corrige un bug dans un de TES dépôts GitHub. Il cherche, lit, modifie le code en plusieurs étapes, puis ouvre une pull request. Entrée : repo (nom du dépôt, ou proprietaire/nom), problem (le problème en une ou deux phrases). Peut durer plusieurs minutes.',
     inputSchema: {
       type: 'object',
       properties: { repo: { type: 'string' }, problem: { type: 'string' } },
@@ -282,7 +351,7 @@ http
       result = {
         protocolVersion: (msg.params && msg.params.protocolVersion) || '2025-03-26',
         capabilities: { tools: {} },
-        serverInfo: { name: 'dev-fix', version: '2.1.0' },
+        serverInfo: { name: 'dev-fix', version: '3.0.0' },
       };
     } else if (msg.method === 'tools/list') {
       result = { tools: TOOLS };
