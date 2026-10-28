@@ -23,7 +23,8 @@ echo "MCP_SECRET=$(openssl rand -hex 24)"
 
 Copie ces lignes dans `.env` (commande : `nano .env`), puis remplis aussi :
 - `DOMAIN_CLIENT` et `DOMAIN_SERVER` avec l'adresse de la VM
-- `DEEPSEEK_API_KEY` : ta clé DeepSeek (celle du service, payée par les abonnements)
+- `VISION_KEYS` : `clé_deepseek,clé_gemini` (tes clés, séparées par une virgule : elles paient les tokens de l'abonnement)
+- `DEEPSEEK_API_KEY` : ta clé DeepSeek (pour les corrections de code)
 
 ## 3. Lancer
 
@@ -34,19 +35,28 @@ sudo docker compose up -d --build
 L'outil `dev-fix` est déjà branché dans `librechat.gce.yaml`.
 (Si tu modifies `librechat.yaml` à la racine du dépôt, reporte le changement dans `librechat.gce.yaml`.)
 
-## 4. Chaque utilisateur a son dev
+## 4. Ce que chaque abonné reçoit (abonnement de 13 $ par mois)
+
+- **80 messages par jour** (`MESSAGE_USER_MAX` dans `.env`).
+- **2 $ de tokens de chat par mois** (section `balance` de `librechat.gce.yaml`).
+- **1 $ de tokens pour les corrections de code par mois** (`FIX_BUDGET_USD` dans `.env`).
+- Total : 3 $ de tokens par mois, payés avec tes clés.
+
+À vérifier au premier test : envoie un message avec un compte test et regarde de combien baisse le solde. Les modèles « Aube » et « Soleil » ont des noms inventés : si LibreChat ne connaît pas leur prix, il en applique un par défaut, qui peut être trop haut ou trop bas.
+
+## 5. Chaque utilisateur a son dev
 
 Chaque utilisateur, dans LibreChat, ouvre les réglages de l'outil `dev-fix` et saisit **son propre token GitHub**
 (token à créer sur GitHub : droits « Contents » et « Pull requests » en écriture, sur ses dépôts).
 Ensuite l'outil travaille sur **ses** dépôts, dans **son** espace de travail, séparé des autres.
 
-## 5. Utiliser
+## 6. Utiliser
 
 Écrire dans le chat, par exemple : « Dans mon dépôt Chap-money, j'ai un problème de paiement : ... ».
 L'outil `dev_fix` cherche les fichiers, fait une seule requête au modèle, applique la correction sur une branche et ouvre une pull request. Rien ne touche la branche principale tant que l'utilisateur n'a pas validé la pull request.
-Une correction peut durer 1 à 2 minutes.
+Une correction peut durer 1 à 2 minutes. Le budget restant est indiqué à la fin de chaque réponse de l'outil.
 
-Limites (modifiables dans `.env`) : `MAX_PARALLEL` corrections en même temps sur le serveur (les autres attendent leur tour), une correction à la fois par utilisateur, `MAX_FIX_PER_DAY` corrections par utilisateur et par jour.
+`MAX_PARALLEL` corrections tournent en même temps sur le serveur (les autres attendent leur tour), une seule à la fois par utilisateur.
 
 ## Si l'outil n'apparaît pas
 
