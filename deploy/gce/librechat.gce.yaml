@@ -69,11 +69,18 @@ mcpServers:
     requiresOAuth: true
     timeout: 60000
 
-  # Correction de bugs : cherche les fichiers, une seule requête au modèle, pull request.
+  # Correction de bugs, un dev par utilisateur : chacun saisit SON token GitHub
+  # (réglages de l'outil dans LibreChat) et travaille sur SES dépôts, dans son espace.
   # Une correction peut durer 1 à 2 minutes (copie du dépôt + modèle + envoi).
   dev-fix:
     type: streamable-http
     url: http://dev-fix:3000/mcp
     headers:
       Authorization: "Bearer ${MCP_SECRET}"
+      X-GitHub-Token: "{{MY_GITHUB_TOKEN}}"
+      X-User-Id: "{{LIBRECHAT_USER_ID}}"
+    customUserVars:
+      MY_GITHUB_TOKEN:
+        title: "Ton token GitHub"
+        description: "Token GitHub avec accès en écriture au contenu et aux pull requests de tes dépôts. Il reste privé, lié à ton compte."
     timeout: 180000
