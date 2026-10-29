@@ -1,0 +1,39 @@
+# Orchestrateur : seul composant qui détient le jeton Fly (FLY_API_TOKEN) et les clés LLM.
+# Secrets à définir avec `fly secrets set` (jamais dans ce fichier, dépôt public) :
+#   FLY_API_TOKEN, ORCHESTRATOR_SECRET, LLM_API_KEY
+app = 'jeremy-sbx-orch'
+primary_region = 'ams'
+
+[build]
+
+[env]
+  SANDBOX_APP = 'jeremy-sbx-jobs'
+  SANDBOX_IMAGE = 'registry.fly.io/jeremy-sbx-jobs:latest'
+  ORCHESTRATOR_PUBLIC_URL = 'https://jeremy-sbx-orch.fly.dev'
+  SANDBOX_REGION = 'ams'
+  SANDBOX_MEMORY_MB = '1024'
+  DB_PATH = '/data/orch.db'
+  # Quotas (modifiables sans toucher au code)
+  MAX_RUNTIME_SEC = '900'
+  MAX_CONCURRENT_PER_USER = '1'
+  MAX_CONCURRENT_GLOBAL = '4'
+  DAILY_JOBS_PER_USER = '5'
+  TOKENS_PER_JOB = '150000'
+  TOKENS_PER_USER_DAY = '400000'
+  LLM_MODEL = 'gemini-2.5-flash'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[mounts]]
+  source = 'orch_data'
+  destination = '/data'
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256

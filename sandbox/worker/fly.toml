@@ -1,0 +1,8 @@
+# App qui ne sert qu'à héberger l'image et les machines éphémères (aucun service exposé).
+# Construire et pousser l'image :
+#   fly deploy --build-only --push --image-label latest -a jeremy-sbx-jobs
+app = 'jeremy-sbx-jobs'
+primary_region = 'ams'
+
+[build]
+  dockerfile = 'Dockerfile'

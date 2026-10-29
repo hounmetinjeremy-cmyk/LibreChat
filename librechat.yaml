@@ -94,3 +94,21 @@ mcpServers:
     url: https://github-mcp-lite.hounmetinjeremy.workers.dev
     requiresOAuth: true
     timeout: 60000
+
+  # Sandboxes éphémères Fly.io (remplace l'ancien terminal) : LibreChat ne fait que commander
+  # l'orchestrateur, qui crée un conteneur par tâche (clone, correction IA, push, PR) puis le détruit.
+  # L'identité vient de LibreChat (non falsifiable) ; quotas de tâches et de tokens par utilisateur.
+  # Secret Fly : ORCHESTRATOR_SECRET. Détails : sandbox/README.md.
+  sandbox:
+    type: streamable-http
+    url: ${SANDBOX_MCP_URL}
+    headers:
+      Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
+      X-User-Id: "{{LIBRECHAT_USER_ID}}"
+      X-GitHub-Token: "{{GITHUB_PAT}}"
+    customUserVars:
+      GITHUB_PAT:
+        title: "Token GitHub"
+        description: "Token fine-grained limité à tes dépôts : Contents et Pull requests en lecture/écriture."
+    timeout: 60000
+    serverInstructions: "Pour corriger un bug dans un dépôt GitHub, appelle fix_repo_bug une seule fois, puis dis à l'utilisateur de redemander le statut plus tard (get_job). Ne boucle jamais."
