@@ -5,12 +5,14 @@
   ];
   var PROVIDERS = [
     { id: 'deepseek', label: 'DeepSeek' },
-    { id: 'gemini', label: 'Gemini (Google)' }
+    { id: 'gemini', label: 'Gemini (Google)' },
+    { id: 'cloudflare', label: 'Cloudflare Workers AI' }
   ];
-  var LABEL = { deepseek: 'DeepSeek', gemini: 'Gemini' };
+  var LABEL = { deepseek: 'DeepSeek', gemini: 'Gemini', cloudflare: 'Cloudflare' };
   var MODELS = {
     deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
-    gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.5-flash']
+    gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.5-flash'],
+    cloudflare: ['@cf/meta/llama-3.1-8b-instruct', '@cf/openai/gpt-oss-120b', '@cf/openai/gpt-oss-20b']
   };
   var intro = document.getElementById('intro');
   var fieldsBox = document.getElementById('fields');
@@ -46,14 +48,17 @@
     });
   }
 
-  function keyField(id, label, help, onClear) {
+  /* plain = champ texte lisible (ID de compte), sinon champ masqué pour une clé. */
+  function keyField(id, label, help, onClear, plain) {
     var state = el('div', { className: 'state' });
-    var input = el('input', { type: 'password', autocomplete: 'off', placeholder: 'Coller la clé ici (vide = inchangée)' });
+    var input = plain
+      ? el('input', { type: 'text', autocomplete: 'off', autocapitalize: 'off', spellcheck: false, placeholder: 'Coller l’ID ici (vide = inchangé)' })
+      : el('input', { type: 'password', autocomplete: 'off', placeholder: 'Coller la clé ici (vide = inchangée)' });
     var clear = el('button', { type: 'button', textContent: 'Effacer' });
     clear.addEventListener('click', function () {
-      if (!window.confirm('Effacer cette clé ?')) { return; }
+      if (!window.confirm(plain ? 'Effacer cet ID ?' : 'Effacer cette clé ?')) { return; }
       setStatus('Suppression…');
-      onClear().then(function () { setStatus('Clé effacée.', 'ok'); })
+      onClear().then(function () { setStatus(plain ? 'ID effacé.' : 'Clé effacée.', 'ok'); })
         .catch(function (e) { setStatus(e.message, 'err'); });
     });
     var wrap = el('div', { className: 'field' }, [
@@ -62,19 +67,19 @@
       state,
       el('div', { className: 'row' }, [input, clear])
     ]);
-    return { wrap: wrap, input: input, state: state };
+    return { wrap: wrap, input: input, state: state, plain: Boolean(plain) };
   }
 
   function showState(ref, info) {
     var i = info || { set: false, hint: '' };
     if (i.set) {
-      ref.state.textContent = 'Enregistrée (' + i.hint + ')';
+      ref.state.textContent = (ref.plain ? 'Enregistré (' : 'Enregistrée (') + i.hint + ')';
       ref.state.className = 'state ok';
     } else if (i.viaServer) {
-      ref.state.textContent = 'Clé du serveur utilisée (rien enregistré ici)';
+      ref.state.textContent = (ref.plain ? 'ID du serveur utilisé' : 'Clé du serveur utilisée') + ' (rien enregistré ici)';
       ref.state.className = 'state ok';
     } else {
-      ref.state.textContent = 'Pas encore enregistrée';
+      ref.state.textContent = ref.plain ? 'Pas encore enregistré' : 'Pas encore enregistrée';
       ref.state.className = 'state';
     }
     ref.input.value = '';
@@ -93,13 +98,22 @@
     var gemini = keyField('gemini', 'Clé Gemini (Google)', 'Utilisée par Aube et Soleil, et pour lire les images et PDF.', function () {
       return api('/api/admin-models', 'PUT', { keys: { gemini: null } }).then(renderModels);
     });
+    var cloudflare = keyField('cloudflare', 'Clé Cloudflare Workers AI', 'Jeton API Cloudflare avec la permission Workers AI. Utilisé par Aube et Soleil, avec l’ID de compte ci-dessous.', function () {
+      return api('/api/admin-models', 'PUT', { keys: { cloudflare: null } }).then(renderModels);
+    });
+    var account = keyField('cloudflare-account', 'ID de compte Cloudflare', 'Identifiant du compte Cloudflare (obligatoire pour utiliser la clé Cloudflare).', function () {
+      return api('/api/admin-models', 'PUT', { cloudflareAccount: null }).then(renderModels);
+    }, true);
     fieldsBox.appendChild(el('div', { className: 'card' }, [
       el('h2', { textContent: 'Clés API' }),
-      el('div', { className: 'help', textContent: 'Ajoute les clés que tu as. Si l’une est refusée, vide ou en panne, le serveur bascule automatiquement sur l’autre. Aube et Soleil marchent avec n’importe laquelle.' }),
+      el('div', { className: 'help', textContent: 'Ajoute les clés que tu as. Si l’une est refusée, vide ou en panne, le serveur bascule automatiquement sur une autre. Aube et Soleil marchent avec n’importe laquelle.' }),
       deepseek.wrap,
-      gemini.wrap
+      gemini.wrap,
+      cloudflare.wrap,
+      account.wrap
     ]));
-    refs.keys = { deepseek: deepseek, gemini: gemini };
+    refs.keys = { deepseek: deepseek, gemini: gemini, cloudflare: cloudflare };
+    refs.account = account;
   }
 
   function buildRole(role) {
@@ -114,7 +128,7 @@
     });
     var card = el('div', { className: 'card' }, [
       el('h2', { textContent: role.title }),
-      el('div', { className: 'help', textContent: role.help + ' Fournisseur essayé en premier ; si sa clé échoue, l’autre prend le relais.' }),
+      el('div', { className: 'help', textContent: role.help + ' Fournisseur essayé en premier ; si sa clé échoue, un autre prend le relais.' }),
       el('div', { className: 'field' }, [el('label', { textContent: 'Fournisseur préféré' }), provider]),
       el('div', { className: 'field' }, [el('label', { textContent: 'Modèle' }), model, list]),
       chain
@@ -160,6 +174,8 @@
     var keys = data.keys || {};
     showState(refs.keys.deepseek, keys.deepseek);
     showState(refs.keys.gemini, keys.gemini);
+    showState(refs.keys.cloudflare, keys.cloudflare);
+    showState(refs.account, data.cloudflare);
     var v = data.vision || {};
     refs.vision.model.value = v.model || '';
   }
@@ -189,10 +205,12 @@
       var r = refs[role.id];
       body[role.id] = { provider: r.provider.value, model: r.model.value.trim() };
     });
-    ['deepseek', 'gemini'].forEach(function (p) {
+    ['deepseek', 'gemini', 'cloudflare'].forEach(function (p) {
       var k = refs.keys[p].input.value.trim();
       if (k) { body.keys[p] = k; }
     });
+    var acc = refs.account.input.value.trim();
+    if (acc) { body.cloudflareAccount = acc; }
     var vm = refs.vision.model.value.trim();
     if (vm) { body.vision.model = vm; }
     var videoKey = refs.video.key.input.value.trim();

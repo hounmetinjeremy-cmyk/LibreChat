@@ -1,6 +1,7 @@
 /**
  * Modèles « Aube » et « Soleil » réglés depuis la page admin (/admin-config).
- * - Les clés (DeepSeek, Gemini) sont enregistrées chiffrées en base. Chaque rôle a un fournisseur
+ * - Les clés (DeepSeek, Gemini, Cloudflare Workers AI) sont enregistrées chiffrées en base
+ *   (Cloudflare demande aussi l'ID de compte). Chaque rôle a un fournisseur
  *   préféré et un modèle. Si ce fournisseur n'a pas de clé, ou s'il échoue (clé refusée, solde
  *   épuisé, quota, panne), le serveur BASCULE AUTOMATIQUEMENT sur l'autre clé disponible.
  * - Route interne /ai-proxy/v1 : LibreChat l'appelle sur le serveur lui-même (127.0.0.1), elle lit
@@ -16,10 +17,11 @@ const requireJwtAuth = require('../middleware/requireJwtAuth');
 
 const ROLES = ['aube', 'soleil'];
 const LABELS = { aube: 'Aube', soleil: 'Soleil' };
-const PROVIDER_LABELS = { deepseek: 'DeepSeek', gemini: 'Gemini' };
+const PROVIDER_LABELS = { deepseek: 'DeepSeek', gemini: 'Gemini', cloudflare: 'Cloudflare' };
 const PROVIDERS = {
   deepseek: 'https://api.deepseek.com/v1/chat/completions',
   gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+  cloudflare: 'https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1/chat/completions',
 };
 const DEFAULTS = {
   aube: { provider: 'deepseek', model: 'deepseek-v4-flash' },
@@ -27,14 +29,23 @@ const DEFAULTS = {
 };
 /** Modèle utilisé pour chaque rôle quand on bascule sur un autre fournisseur. */
 const AUTO_MODELS = {
-  aube: { deepseek: 'deepseek-v4-flash', gemini: 'gemini-2.5-flash' },
-  soleil: { deepseek: 'deepseek-v4-pro', gemini: 'gemini-2.5-pro' },
+  aube: {
+    deepseek: 'deepseek-v4-flash',
+    gemini: 'gemini-2.5-flash',
+    cloudflare: '@cf/meta/llama-3.1-8b-instruct',
+  },
+  soleil: {
+    deepseek: 'deepseek-v4-pro',
+    gemini: 'gemini-2.5-pro',
+    cloudflare: '@cf/openai/gpt-oss-120b',
+  },
 };
 const DEFAULT_VISION_MODEL = 'gemini-2.5-flash';
 const GEMINI_NATIVE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DOC_ID = 'models';
 const MAX_KEY_LENGTH = 600;
-const MODEL_RE = /^[A-Za-z0-9._:\/-]{1,100}$/;
+const MODEL_RE = /^[A-Za-z0-9._:@\/-]{1,100}$/;
+const ACCOUNT_RE = /^[A-Za-z0-9]{16,64}$/;
 
 const IMAGE_PROMPT =
   "Tu es les yeux d'un assistant qui ne peut pas voir. Décris cette image de façon précise et complète : " +
@@ -121,7 +132,20 @@ function fallbackKeys() {
   return {
     deepseek: real(pair[0]),
     gemini: real(process.env.GOOGLE_KEY) || real(pair[1]),
+    cloudflare: real(process.env.CLOUDFLARE_API_TOKEN),
   };
+}
+
+/** ID de compte Cloudflare : saisi dans la page admin, sinon secret Fly CLOUDFLARE_ACCOUNT_ID. */
+const accountId = (cfg) => cfg.cloudflareAccount || real(process.env.CLOUDFLARE_ACCOUNT_ID);
+
+/** Adresse d'appel d'un fournisseur ('' si elle est incomplète, ex. Cloudflare sans ID de compte). */
+function providerUrl(cfg, provider) {
+  if (provider !== 'cloudflare') {
+    return PROVIDERS[provider];
+  }
+  const account = accountId(cfg);
+  return account ? PROVIDERS.cloudflare.replace('{account}', encodeURIComponent(account)) : '';
 }
 
 /* ---------- clés et bascule automatique ---------- */
@@ -131,7 +155,13 @@ function modelFits(provider, model) {
   if (!model) {
     return false;
   }
-  return provider === 'gemini' ? /^gemini/i.test(model) : !/^gemini/i.test(model);
+  if (provider === 'gemini') {
+    return /^gemini/i.test(model);
+  }
+  if (provider === 'cloudflare') {
+    return /^@cf\//i.test(model);
+  }
+  return !/^gemini/i.test(model) && !/^@cf\//i.test(model);
 }
 
 /** Meilleure clé connue pour un fournisseur : réserve de clés, anciennes clés de rôle, secours. */
@@ -171,10 +201,11 @@ function candidatesFor(cfg, role) {
   const out = [];
   for (const provider of order) {
     const key = poolKey(cfg, provider);
-    if (!key) {
+    const url = providerUrl(cfg, provider);
+    if (!key || !url) {
       continue;
     }
-    out.push({ provider, model: roleModel(cfg, role, provider), key });
+    out.push({ provider, model: roleModel(cfg, role, provider), key, url });
   }
   return out;
 }
@@ -315,6 +346,24 @@ function isInternal(req) {
   return loopback && !req.headers['x-forwarded-for'];
 }
 
+/** Extrait le message d'erreur d'une réponse de fournisseur (formats OpenAI, Cloudflare ou texte brut). */
+function errorDetail(raw) {
+  try {
+    const j = JSON.parse(raw);
+    const first = Array.isArray(j) ? j[0] : j;
+    const msg =
+      (first && first.error && (first.error.message || (typeof first.error === 'string' ? first.error : ''))) ||
+      (first && first.message) ||
+      (first && Array.isArray(first.errors) && first.errors[0] && first.errors[0].message);
+    if (msg) {
+      return String(msg).slice(0, 300);
+    }
+  } catch (e) {
+    /* pas du JSON */
+  }
+  return String(raw || 'aucun détail').slice(0, 300);
+}
+
 async function handleChat(req, res) {
   if (!isInternal(req)) {
     return res.status(403).json(err('Accès refusé'));
@@ -340,6 +389,7 @@ async function handleChat(req, res) {
     });
 
     let up = null;
+    const failures = [];
     for (let i = 0; i < candidates.length; i++) {
       const c = candidates[i];
       const isLast = i === candidates.length - 1;
@@ -349,7 +399,7 @@ async function handleChat(req, res) {
         payload.max_tokens = Math.max(payload.max_tokens, 4096);
       }
       try {
-        up = await fetch(PROVIDERS[c.provider], {
+        up = await fetch(c.url, {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: `Bearer ${c.key}` },
           body: JSON.stringify(payload),
@@ -360,10 +410,14 @@ async function handleChat(req, res) {
           return res.end();
         }
         logger.warn(`[aiModels] ${PROVIDER_LABELS[c.provider]} injoignable pour « ${LABELS[role]} »`);
+        failures.push(`${PROVIDER_LABELS[c.provider]} injoignable`);
         if (isLast) {
           throw e;
         }
         continue;
+      }
+      if (!up.ok) {
+        failures.push(`${PROVIDER_LABELS[c.provider]} ${up.status}`);
       }
       if (up.ok || !shouldSwitch(up.status) || isLast) {
         break;
@@ -380,6 +434,12 @@ async function handleChat(req, res) {
       }
     }
 
+    if (!up.ok) {
+      // Tous les essais ont échoué : on indique chaque fournisseur et son code, puis le détail du dernier.
+      const raw = await up.text().catch(() => '');
+      logger.warn(`[aiModels] échec pour « ${LABELS[role]} » : ${failures.join(' → ')}`);
+      return res.status(up.status).json(err(`${failures.join(' → ')} — ${errorDetail(raw)}`));
+    }
     res.status(up.status);
     res.set('content-type', up.headers.get('content-type') || 'application/json');
     if (!up.body) {
@@ -442,6 +502,11 @@ function describeConfig(cfg) {
       viaServer: !stored && Boolean(any || fb[provider]),
     };
   }
+  out.cloudflare = {
+    set: Boolean(cfg.cloudflareAccount),
+    hint: accountId(cfg) || '',
+    viaServer: !cfg.cloudflareAccount && Boolean(accountId(cfg)),
+  };
   const v = cfg.vision || {};
   out.vision = {
     model: v.model || DEFAULT_VISION_MODEL,
@@ -525,6 +590,14 @@ adminRouter.put('/api/admin-models', requireJwtAuth, requireAdmin, async (req, r
           cfg.keys[provider] = v.trim();
         }
       }
+    }
+    if (body.cloudflareAccount === null) {
+      delete cfg.cloudflareAccount;
+    } else if (typeof body.cloudflareAccount === 'string' && body.cloudflareAccount.trim()) {
+      if (!ACCOUNT_RE.test(body.cloudflareAccount.trim())) {
+        return res.status(400).json({ message: 'ID de compte Cloudflare invalide' });
+      }
+      cfg.cloudflareAccount = body.cloudflareAccount.trim();
     }
     await saveConfig(cfg);
     res.set('Cache-Control', 'no-store');
