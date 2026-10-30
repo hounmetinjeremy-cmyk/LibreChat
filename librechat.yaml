@@ -62,8 +62,9 @@ endpoints:
 
 # Sélecteur direct : un seul bouton avec « Aube » et « Soleil », sans niveau « Modèles » ni « Vidéo ».
 # Aube est présélectionné pour toute nouvelle conversation.
-# mcpServers : outils activés automatiquement dans chaque conversation avec ce modèle
-# (sandbox = terminal jetable qui clone, corrige, déploie et pousse ; github = connexion GitHub).
+# mcpServers : outils activés automatiquement dans chaque conversation avec ce modèle.
+# Seul « sandbox » (terminal jetable) est automatique : un serveur avec connexion OAuth (github,
+# cloudflare) ne doit PAS être ici, sinon chaque message attend la connexion et reste bloqué.
 # Le bouton + (menu des serveurs MCP) reste visible : les autres serveurs y restent accessibles.
 modelSpecs:
   enforce: true
@@ -73,14 +74,14 @@ modelSpecs:
       label: "Aube"
       default: true
       iconURL: "/assets/jeremy-logo.svg"
-      mcpServers: ["sandbox", "github"]
+      mcpServers: ["sandbox"]
       preset:
         endpoint: "Modèles"
         model: "Aube"
     - name: "soleil"
       label: "Soleil"
       iconURL: "/assets/jeremy-logo.svg"
-      mcpServers: ["sandbox", "github"]
+      mcpServers: ["sandbox"]
       preset:
         endpoint: "Modèles"
         model: "Soleil"
