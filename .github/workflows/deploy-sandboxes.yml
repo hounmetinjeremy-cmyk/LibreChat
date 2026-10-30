@@ -26,15 +26,15 @@ jobs:
 
       - name: Créer les apps et le volume (sans effet s'ils existent déjà)
         run: |
-          fly apps create "$JOBS_APP" || echo "$JOBS_APP existe déjà"
-          fly apps create "$ORCH_APP" || echo "$ORCH_APP existe déjà"
-          if ! fly volumes list -a "$ORCH_APP" | grep -q orch_data; then
-            fly volumes create orch_data -a "$ORCH_APP" -r ams -n 1 -s 1 -y
+          flyctl apps create "$JOBS_APP" || echo "$JOBS_APP existe déjà"
+          flyctl apps create "$ORCH_APP" || echo "$ORCH_APP existe déjà"
+          if ! flyctl volumes list -a "$ORCH_APP" | grep -q orch_data; then
+            flyctl volumes create orch_data -a "$ORCH_APP" -r ams -n 1 -s 1 -y
           fi
 
       - name: Construire et pousser l'image des conteneurs
         working-directory: sandbox/worker
-        run: fly deploy --build-only --push --image-label latest -a "$JOBS_APP"
+        run: flyctl deploy --build-only --push --image-label latest -a "$JOBS_APP"
 
       - name: Configurer les secrets de l'orchestrateur
         env:
@@ -44,16 +44,16 @@ jobs:
           test -n "$ORCHESTRATOR_SECRET" || { echo "Secret GitHub ORCHESTRATOR_SECRET manquant"; exit 1; }
           test -n "$LLM_API_KEY" || { echo "Secret GitHub LLM_API_KEY manquant"; exit 1; }
           # Jeton limité à l'app des conteneurs : l'orchestrateur ne peut rien faire d'autre.
-          JOBS_TOKEN="$(fly tokens create deploy -a "$JOBS_APP" | tail -n 1)"
+          JOBS_TOKEN="$(flyctl tokens create deploy -a "$JOBS_APP" | tail -n 1)"
           echo "::add-mask::$JOBS_TOKEN"
-          fly secrets set --stage -a "$ORCH_APP" \
+          flyctl secrets set --stage -a "$ORCH_APP" \
             "FLY_API_TOKEN=$JOBS_TOKEN" \
             "ORCHESTRATOR_SECRET=$ORCHESTRATOR_SECRET" \
             "LLM_API_KEY=$LLM_API_KEY"
 
       - name: Déployer l'orchestrateur
         working-directory: sandbox/orchestrator
-        run: fly deploy -a "$ORCH_APP" --ha=false
+        run: flyctl deploy -a "$ORCH_APP" --ha=false
 
       - name: Test de santé
         run: curl -fsS --retry 10 --retry-delay 6 --retry-connrefused "https://$ORCH_APP.fly.dev/healthz"
@@ -62,4 +62,4 @@ jobs:
         if: ${{ inputs.redeploy_librechat }}
         env:
           ORCHESTRATOR_SECRET: ${{ secrets.ORCHESTRATOR_SECRET }}
-        run: fly secrets set -a "$LIBRECHAT_APP" "ORCHESTRATOR_SECRET=$ORCHESTRATOR_SECRET"
+        run: flyctl secrets set -a "$LIBRECHAT_APP" "ORCHESTRATOR_SECRET=$ORCHESTRATOR_SECRET"
