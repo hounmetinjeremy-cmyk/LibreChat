@@ -9,11 +9,13 @@ interface:
     share: false
 
 endpoints:
-  # 1 message = 1 requête (sans outil). Avec un agent et un outil : 2 requêtes maximum
-  # (appel d'outil + réponse finale). Jamais plus.
+  # Limite d'étapes par message. Une étape = un passage du modèle OU des outils.
+  # Sans outil : 1 étape. Un tour d'outil = 3 étapes (modèle, outil, modèle qui lit le résultat).
+  # 5 = deux tours d'outils maximum puis la réponse finale (3 appels du modèle au plus).
+  # Avec 2, l'agent appelait un outil puis n'avait plus d'étape pour répondre.
   agents:
-    recursionLimit: 2
-    maxRecursionLimit: 2
+    recursionLimit: 5
+    maxRecursionLimit: 5
 
   custom:
     # Les utilisateurs ne voient que « Aube » et « Soleil ».
