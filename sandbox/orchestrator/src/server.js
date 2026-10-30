@@ -106,6 +106,77 @@ async function linkedToken(userId) {
   }
 }
 
+// ---------------------------------------------------------------- recherche de dépôts (noms approximatifs)
+const norm = (s) =>
+  String(s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+const words = (s) => norm(s).split(/[^a-z0-9]+/).filter((w) => w.length >= 2);
+
+function lev(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+// Ressemblance entre deux mots : 1 = identique, 0 = rien en commun (tolère les fautes de frappe).
+const sim = (a, b) => {
+  if (a === b) return 1;
+  if (a.length >= 3 && b.length >= 3 && (a.includes(b) || b.includes(a))) return 0.85;
+  return Math.max(0, 1 - lev(a, b) / Math.max(a.length, b.length));
+};
+
+// Tous les dépôts auxquels le token donne accès (300 au plus), les plus récents d'abord.
+async function userRepos(token) {
+  const out = [];
+  for (let page = 1; page <= 3; page++) {
+    const r = await fetch(
+      `https://api.github.com/user/repos?per_page=100&page=${page}&sort=updated&affiliation=owner,collaborator,organization_member`,
+      {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "jeremy-orchestrateur" },
+        signal: AbortSignal.timeout(15000),
+      }
+    );
+    if (!r.ok) throw new Error(`GitHub ${r.status}`);
+    const list = await r.json();
+    out.push(...list);
+    if (list.length < 100) break;
+  }
+  return out;
+}
+
+async function searchRepos(token, query) {
+  const q = words(query);
+  if (!q.length) return [];
+  const scored = [];
+  for (const repo of await userRepos(token)) {
+    const nameWords = words(repo.name);
+    const descWords = words(repo.description);
+    let total = 0;
+    for (const w of q) {
+      const inName = Math.max(0, ...nameWords.map((n) => sim(w, n)));
+      const inDesc = Math.max(0, ...descWords.map((d) => sim(w, d)));
+      total += Math.max(inName >= 0.6 ? inName : 0, inDesc >= 0.8 ? inDesc * 0.5 : 0);
+    }
+    const score = total / q.length;
+    if (score >= 0.45) scored.push({ score, repo });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 6).map(({ repo }) => ({
+    repo: repo.full_name,
+    private: Boolean(repo.private),
+    description: String(repo.description || "").slice(0, 100),
+    updated: String(repo.pushed_at || repo.updated_at || "").slice(0, 10),
+  }));
+}
+
 // ---------------------------------------------------------------- API Fly Machines
 async function fly(method, p, body) {
   const r = await fetch(`https://api.machines.dev/v1/apps/${C.app}${p}`, {
@@ -206,11 +277,37 @@ const ok = (t) => ({ content: [{ type: "text", text: t }] });
 const ko = (t) => ({ content: [{ type: "text", text: t }], isError: true });
 
 function buildServer(userId, ghToken, svc) {
-  const s = new McpServer({ name: "fly-sandboxes", version: "2.0.0" });
+  const s = new McpServer({ name: "fly-sandboxes", version: "2.1.0" });
+
+  s.tool(
+    "find_repos",
+    "Cherche parmi les dépôts GitHub de l'utilisateur (publics et privés) ceux qui ressemblent à un nom ou à des mots-clés, même approximatifs ou mal orthographiés. À appeler AVANT run_task dès que l'utilisateur ne donne pas le nom exact proprietaire/nom. Retourne une courte liste à proposer à l'utilisateur pour confirmation.",
+    {
+      query: z.string().min(2).max(100).describe("Nom approximatif ou mots-clés du projet, tels que l'utilisateur les a écrits"),
+    },
+    async ({ query }) => {
+      const gh = (await linkedToken(userId)) || (ghToken && !ghToken.includes("{{") && ghToken.length >= 20 ? ghToken : "");
+      if (!gh) {
+        return ko(
+          `GitHub n'est pas encore connecté pour cet utilisateur. Donne-lui ce lien tel quel pour connecter son compte GitHub (une seule fois, valable 30 minutes), puis il pourra redemander : ${connectLink(userId)}`
+        );
+      }
+      try {
+        const repos = await searchRepos(gh, query);
+        if (!repos.length) {
+          return ok(`Aucun dépôt ne ressemble à « ${query.slice(0, 100)} ». Demande à l'utilisateur de préciser le nom du projet.`);
+        }
+        return ok(JSON.stringify(repos));
+      } catch (err) {
+        console.error("find_repos:", err.message);
+        return ko("Impossible de lire les dépôts GitHub pour le moment.");
+      }
+    }
+  );
 
   s.tool(
     "run_task",
-    "Exécute une tâche de développement ou de déploiement dans un conteneur Linux isolé et jetable : clone d'un dépôt GitHub (ou création d'un nouveau projet), vérifications automatiques, correction par l'IA, commandes (Vercel, Cloudflare, Render, Fly...), push et pull request. Appeler UNE seule fois ; retourne un job_id tout de suite. Ne pas lire les fichiers soi-même.",
+    "Exécute une tâche de développement ou de déploiement dans un conteneur Linux isolé et jetable : clone d'un dépôt GitHub (ou création d'un nouveau projet), vérifications automatiques, correction par l'IA, commandes (Vercel, Cloudflare, Render, Fly...), push et pull request. Appeler UNE seule fois ; retourne un job_id tout de suite. Ne pas lire les fichiers soi-même. Le nom du dépôt doit être exact : s'il ne l'est pas, appeler find_repos d'abord.",
     {
       repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional().describe("Dépôt existant : proprietaire/nom"),
       new_repo_name: z.string().regex(/^[\w.-]{1,100}$/).optional().describe("Nom d'un NOUVEAU dépôt privé à créer (au lieu de repo)"),
