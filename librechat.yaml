@@ -97,11 +97,13 @@ mcpServers:
 
   # Terminal Linux jetable sur Fly.io : LibreChat ne fait que commander l'orchestrateur, qui crée un
   # conteneur par tâche (clone, vérifications, correction, déploiement, push, PR) puis le détruit.
+  # chatMenu: false = caché du menu du chat ; réservé à l'agent (constructeur d'agent).
   # L'identité vient de LibreChat (non falsifiable) ; quotas de tâches et de tokens par utilisateur.
-  # Les clés de services sont propres à chaque utilisateur. Secret Fly : ORCHESTRATOR_SECRET.
+  # Secret Fly : ORCHESTRATOR_SECRET.
   sandbox:
     type: streamable-http
     url: ${SANDBOX_MCP_URL}
+    chatMenu: false
     headers:
       Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
       X-User-Id: "{{LIBRECHAT_USER_ID}}"
