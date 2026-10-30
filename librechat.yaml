@@ -95,10 +95,10 @@ mcpServers:
     requiresOAuth: true
     timeout: 60000
 
-  # Sandboxes éphémères Fly.io (remplace l'ancien terminal) : LibreChat ne fait que commander
-  # l'orchestrateur, qui crée un conteneur par tâche (clone, correction IA, push, PR) puis le détruit.
+  # Terminal Linux jetable sur Fly.io : LibreChat ne fait que commander l'orchestrateur, qui crée un
+  # conteneur par tâche (clone, vérifications, correction, déploiement, push, PR) puis le détruit.
   # L'identité vient de LibreChat (non falsifiable) ; quotas de tâches et de tokens par utilisateur.
-  # Secret Fly : ORCHESTRATOR_SECRET. Détails : sandbox/README.md.
+  # Les clés de services sont propres à chaque utilisateur. Secret Fly : ORCHESTRATOR_SECRET.
   sandbox:
     type: streamable-http
     url: ${SANDBOX_MCP_URL}
@@ -106,9 +106,25 @@ mcpServers:
       Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
       X-User-Id: "{{LIBRECHAT_USER_ID}}"
       X-GitHub-Token: "{{GITHUB_PAT}}"
+      X-Svc-Vercel: "{{VERCEL_TOKEN}}"
+      X-Svc-Cloudflare: "{{CLOUDFLARE_API_TOKEN}}"
+      X-Svc-Render: "{{RENDER_API_KEY}}"
+      X-Svc-Fly: "{{FLY_API_TOKEN}}"
     customUserVars:
       GITHUB_PAT:
         title: "Token GitHub"
-        description: "Token fine-grained limité à tes dépôts : Contents et Pull requests en lecture/écriture."
+        description: "Token limité à tes dépôts : Contents et Pull requests en lecture/écriture."
+      VERCEL_TOKEN:
+        title: "Clé Vercel"
+        description: "Facultatif. Si tu n'en as pas, écris : aucun"
+      CLOUDFLARE_API_TOKEN:
+        title: "Clé Cloudflare"
+        description: "Facultatif. Si tu n'en as pas, écris : aucun"
+      RENDER_API_KEY:
+        title: "Clé Render"
+        description: "Facultatif. Si tu n'en as pas, écris : aucun"
+      FLY_API_TOKEN:
+        title: "Clé Fly.io"
+        description: "Facultatif. Si tu n'en as pas, écris : aucun"
     timeout: 60000
-    serverInstructions: "Pour corriger un bug dans un dépôt GitHub, appelle fix_repo_bug une seule fois, puis dis à l'utilisateur de redemander le statut plus tard (get_job). Ne boucle jamais."
+    serverInstructions: "Pour toute tâche de code, de projet ou de déploiement, appelle run_task une seule fois, puis dis à l'utilisateur de redemander le statut plus tard (get_job). Ne boucle jamais."
