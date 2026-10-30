@@ -64,6 +64,8 @@ endpoints:
 # Aube est présélectionné pour toute nouvelle conversation.
 # mcpServers : outils activés automatiquement dans chaque conversation avec ce modèle
 # (sandbox = terminal jetable qui clone, corrige, déploie et pousse ; github = connexion GitHub).
+# hideBadgeRow : cache la rangée d'outils au-dessus du champ de saisie ; l'utilisateur ne voit
+# pas les outils, c'est l'IA qui décide de les utiliser.
 modelSpecs:
   enforce: true
   prioritize: true
@@ -72,6 +74,7 @@ modelSpecs:
       label: "Aube"
       default: true
       iconURL: "/assets/jeremy-logo.svg"
+      hideBadgeRow: true
       mcpServers: ["sandbox", "github"]
       preset:
         endpoint: "Modèles"
@@ -79,6 +82,7 @@ modelSpecs:
     - name: "soleil"
       label: "Soleil"
       iconURL: "/assets/jeremy-logo.svg"
+      hideBadgeRow: true
       mcpServers: ["sandbox", "github"]
       preset:
         endpoint: "Modèles"
@@ -101,13 +105,14 @@ mcpServers:
 
   # Terminal Linux jetable sur Fly.io : LibreChat ne fait que commander l'orchestrateur, qui crée un
   # conteneur par tâche (clone, vérifications, correction, déploiement, push, PR) puis le détruit.
-  # Activé automatiquement pour Aube et Soleil (modelSpecs.mcpServers). Il n'est plus caché du menu
-  # du chat (l'ancien chatMenu: false empêchait l'IA de trouver ses outils).
+  # chatMenu: false = caché du menu des outils du chat : l'utilisateur ne le voit pas.
+  # Il est activé en arrière-plan pour Aube et Soleil (modelSpecs.mcpServers) ; l'IA décide seule.
   # L'identité vient de LibreChat (non falsifiable) ; quotas de tâches et de tokens par utilisateur.
   # Secret Fly : ORCHESTRATOR_SECRET.
   sandbox:
     type: streamable-http
     url: ${SANDBOX_MCP_URL}
+    chatMenu: false
     headers:
       Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
       X-User-Id: "{{LIBRECHAT_USER_ID}}"
