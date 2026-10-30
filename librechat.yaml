@@ -62,6 +62,8 @@ endpoints:
 
 # Sélecteur direct : un seul bouton avec « Aube » et « Soleil », sans niveau « Modèles » ni « Vidéo ».
 # Aube est présélectionné pour toute nouvelle conversation.
+# mcpServers : outils activés automatiquement dans chaque conversation avec ce modèle
+# (sandbox = terminal jetable qui clone, corrige, déploie et pousse ; github = connexion GitHub).
 modelSpecs:
   enforce: true
   prioritize: true
@@ -70,12 +72,14 @@ modelSpecs:
       label: "Aube"
       default: true
       iconURL: "/assets/jeremy-logo.svg"
+      mcpServers: ["sandbox", "github"]
       preset:
         endpoint: "Modèles"
         model: "Aube"
     - name: "soleil"
       label: "Soleil"
       iconURL: "/assets/jeremy-logo.svg"
+      mcpServers: ["sandbox", "github"]
       preset:
         endpoint: "Modèles"
         model: "Soleil"
@@ -97,13 +101,13 @@ mcpServers:
 
   # Terminal Linux jetable sur Fly.io : LibreChat ne fait que commander l'orchestrateur, qui crée un
   # conteneur par tâche (clone, vérifications, correction, déploiement, push, PR) puis le détruit.
-  # chatMenu: false = caché du menu du chat ; réservé à l'agent (constructeur d'agent).
+  # Activé automatiquement pour Aube et Soleil (modelSpecs.mcpServers). Il n'est plus caché du menu
+  # du chat (l'ancien chatMenu: false empêchait l'IA de trouver ses outils).
   # L'identité vient de LibreChat (non falsifiable) ; quotas de tâches et de tokens par utilisateur.
   # Secret Fly : ORCHESTRATOR_SECRET.
   sandbox:
     type: streamable-http
     url: ${SANDBOX_MCP_URL}
-    chatMenu: false
     headers:
       Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
       X-User-Id: "{{LIBRECHAT_USER_ID}}"
