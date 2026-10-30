@@ -63,11 +63,13 @@ endpoints:
 # Sélecteur direct : un seul bouton avec « Aube » et « Soleil », sans niveau « Modèles » ni « Vidéo ».
 # Aube est présélectionné pour toute nouvelle conversation.
 # mcpServers : outils activés automatiquement dans chaque conversation avec ce modèle.
-# ATTENTION : si un serveur listé ici ne se connecte pas, chaque message échoue avec
-# « The agent is configured to use MCP tools, but none are available ». Aucun serveur n'est donc
-# activé automatiquement pour l'instant (sandbox retiré le temps de trouver pourquoi il ne se
-# connecte pas). Pour le rétablir : ajouter mcpServers: ["sandbox"] sous chaque modèle ci-dessous.
-# Un serveur avec connexion OAuth (github, cloudflare, connexion-github) ne doit PAS être ici non plus.
+# Seul « sandbox » (terminal jetable) est automatique : l'IA lit le message de l'utilisateur et décide
+# seule d'appeler le terminal. GitHub n'est PAS requis avant : le lien de connexion n'est donné par
+# l'outil que si la tâche en a besoin (cloner un projet, en créer un).
+# Un serveur avec connexion OAuth (github, cloudflare, connexion-github) ne doit PAS être ici, sinon
+# chaque message attend la connexion et reste bloqué.
+# Si le chat affiche « The agent is configured to use MCP tools, but none are available », c'est que
+# sandbox ne se connecte pas : retirer mcpServers ci-dessous et vérifier les logs de jeremy-sbx-orch.
 # Le bouton + (menu des serveurs MCP) reste visible : les autres serveurs y restent accessibles.
 modelSpecs:
   enforce: true
@@ -77,12 +79,14 @@ modelSpecs:
       label: "Aube"
       default: true
       iconURL: "/assets/jeremy-logo.svg"
+      mcpServers: ["sandbox"]
       preset:
         endpoint: "Modèles"
         model: "Aube"
     - name: "soleil"
       label: "Soleil"
       iconURL: "/assets/jeremy-logo.svg"
+      mcpServers: ["sandbox"]
       preset:
         endpoint: "Modèles"
         model: "Soleil"
