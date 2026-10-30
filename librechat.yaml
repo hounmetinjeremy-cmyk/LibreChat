@@ -127,6 +127,7 @@ mcpServers:
   # GitHub : plus de token à saisir. L'utilisateur connecte son compte GitHub une fois, soit par le
   # bouton « connexion-github » du menu +, soit par le lien donné par l'outil ; l'orchestrateur
   # récupère son token chiffré (route /api/github-link de LibreChat).
+  # Outils : find_repos (cherche les dépôts de l'utilisateur), run_task, get_job, my_quota.
   # L'identité vient de LibreChat (non falsifiable) ; quotas de tâches et de tokens par utilisateur.
   # Secret Fly : ORCHESTRATOR_SECRET.
   sandbox:
@@ -154,4 +155,4 @@ mcpServers:
         title: "Clé Fly.io"
         description: "Facultatif. Si tu n'en as pas, écris : aucun"
     timeout: 60000
-    serverInstructions: "Pour toute tâche de code, de projet ou de déploiement, appelle run_task une seule fois, puis dis à l'utilisateur de redemander le statut plus tard (get_job). Ne boucle jamais. Si l'outil répond que GitHub n'est pas connecté, donne à l'utilisateur le lien fourni, tel quel, et dis-lui de redemander sa tâche après la connexion."
+    serverInstructions: "Pour toute tâche de code, de projet ou de déploiement : si l'utilisateur ne donne pas le nom exact du dépôt (proprietaire/nom), appelle d'abord find_repos avec les mots qu'il a écrits, puis propose-lui les dépôts trouvés en une phrase courte (« Tu parles de X ? ») et attends son oui avant d'appeler run_task. S'il donne le nom exact, appelle run_task directement. Appelle run_task une seule fois, puis dis à l'utilisateur de redemander le statut plus tard (get_job). Ne boucle jamais. Si un outil répond que GitHub n'est pas connecté, donne à l'utilisateur le lien fourni, tel quel, et dis-lui de redemander après la connexion."
