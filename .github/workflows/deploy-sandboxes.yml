@@ -41,19 +41,14 @@ jobs:
         env:
           ORCHESTRATOR_SECRET: ${{ secrets.ORCHESTRATOR_SECRET }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          JOBS_DEPLOY_TOKEN: ${{ secrets.JOBS_DEPLOY_TOKEN }}
         run: |
           test -n "$ORCHESTRATOR_SECRET" || { echo "Secret GitHub ORCHESTRATOR_SECRET manquant"; exit 1; }
           test -n "$LLM_API_KEY" || { echo "Secret GitHub LLM_API_KEY manquant"; exit 1; }
+          test -n "$JOBS_DEPLOY_TOKEN" || { echo "Secret GitHub JOBS_DEPLOY_TOKEN manquant (jeton de déploiement de l'app $JOBS_APP)"; exit 1; }
           # Jeton limité à l'app des conteneurs : l'orchestrateur ne peut rien faire d'autre.
-          TOKEN_OUT="$(flyctl tokens create deploy -a "$JOBS_APP")"
-          JOBS_TOKEN="$(printf '%s\n' "$TOKEN_OUT" | grep -E '^FlyV1 ' | tail -n 1)"
-          if [ -z "$JOBS_TOKEN" ]; then
-            JOBS_TOKEN="$(printf '%s\n' "$TOKEN_OUT" | grep -v '^[[:space:]]*$' | tail -n 1)"
-          fi
-          test -n "$JOBS_TOKEN" || { echo "Jeton de l'app des conteneurs vide : flyctl tokens create n'a rien renvoyé"; exit 1; }
-          echo "::add-mask::$JOBS_TOKEN"
           flyctl secrets set --stage -a "$ORCH_APP" \
-            "FLY_API_TOKEN=$JOBS_TOKEN" \
+            "FLY_API_TOKEN=$JOBS_DEPLOY_TOKEN" \
             "ORCHESTRATOR_SECRET=$ORCHESTRATOR_SECRET" \
             "LLM_API_KEY=$LLM_API_KEY"
 
