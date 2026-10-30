@@ -104,6 +104,8 @@ mcpServers:
   # conteneur par tâche (clone, vérifications, correction, déploiement, push, PR) puis le détruit.
   # chatMenu: false = ce serveur seul est caché du menu + ; les autres serveurs y restent visibles.
   # Il est activé en arrière-plan pour Aube et Soleil (modelSpecs.mcpServers) ; l'IA décide seule.
+  # GitHub : plus de token à saisir. L'utilisateur connecte son compte GitHub une fois (lien donné par
+  # l'outil, route /api/github-link de LibreChat) ; l'orchestrateur récupère son token chiffré.
   # L'identité vient de LibreChat (non falsifiable) ; quotas de tâches et de tokens par utilisateur.
   # Secret Fly : ORCHESTRATOR_SECRET.
   sandbox:
@@ -113,15 +115,11 @@ mcpServers:
     headers:
       Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
       X-User-Id: "{{LIBRECHAT_USER_ID}}"
-      X-GitHub-Token: "{{GITHUB_PAT}}"
       X-Svc-Vercel: "{{VERCEL_TOKEN}}"
       X-Svc-Cloudflare: "{{CLOUDFLARE_API_TOKEN}}"
       X-Svc-Render: "{{RENDER_API_KEY}}"
       X-Svc-Fly: "{{FLY_API_TOKEN}}"
     customUserVars:
-      GITHUB_PAT:
-        title: "Token GitHub"
-        description: "Token limité à tes dépôts : Contents et Pull requests en lecture/écriture."
       VERCEL_TOKEN:
         title: "Clé Vercel"
         description: "Facultatif. Si tu n'en as pas, écris : aucun"
@@ -135,4 +133,4 @@ mcpServers:
         title: "Clé Fly.io"
         description: "Facultatif. Si tu n'en as pas, écris : aucun"
     timeout: 60000
-    serverInstructions: "Pour toute tâche de code, de projet ou de déploiement, appelle run_task une seule fois, puis dis à l'utilisateur de redemander le statut plus tard (get_job). Ne boucle jamais."
+    serverInstructions: "Pour toute tâche de code, de projet ou de déploiement, appelle run_task une seule fois, puis dis à l'utilisateur de redemander le statut plus tard (get_job). Ne boucle jamais. Si l'outil répond que GitHub n'est pas connecté, donne à l'utilisateur le lien fourni, tel quel, et dis-lui de redemander sa tâche après la connexion."

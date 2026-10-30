@@ -7,6 +7,7 @@ require('./patch-identity.js');
 require('./patch-admin-link.js');
 require('./patch-ai-models.js');
 require('./patch-placeholder.js');
+require('./patch-github-link.js');
 
 const fs = require('fs');
 

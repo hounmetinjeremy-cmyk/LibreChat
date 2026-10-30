@@ -23,6 +23,7 @@ const C = {
   image: need("SANDBOX_IMAGE"),
   secret: need("ORCHESTRATOR_SECRET"),
   publicUrl: need("ORCHESTRATOR_PUBLIC_URL").replace(/\/$/, ""),
+  libreUrl: (e.LIBRECHAT_URL || "https://librechat-a7cwuq.fly.dev").replace(/\/$/, ""),
   llmKey: need("LLM_API_KEY"),
   llmBase: (e.LLM_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, ""),
   llmModel: e.LLM_MODEL || "gemini-2.5-flash",
@@ -81,6 +82,29 @@ const ACTIVE = "('queued','running')";
 
 // Jetons et clés : gardés en mémoire seulement, remis une seule fois au worker.
 const creds = new Map();
+
+// ---------------------------------------------------------------- connexion GitHub (via LibreChat)
+// Lien signé : prouve à LibreChat que la demande vient de cet orchestrateur pour cet utilisateur.
+const hmac = (s) => crypto.createHmac("sha256", C.secret).update(s).digest("hex");
+function connectLink(userId) {
+  const exp = Date.now() + 30 * 60000;
+  return `${C.libreUrl}/api/github-link/start?u=${encodeURIComponent(userId)}&e=${exp}&s=${hmac(`${userId}.${exp}`)}`;
+}
+
+// Token GitHub de l'utilisateur, rangé chiffré côté LibreChat quand il a connecté son compte.
+async function linkedToken(userId) {
+  try {
+    const r = await fetch(`${C.libreUrl}/api/github-link/token?user=${encodeURIComponent(userId)}`, {
+      headers: { Authorization: `Bearer ${C.secret}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return typeof d.token === "string" && d.token.length >= 20 ? d.token : null;
+  } catch {
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------- API Fly Machines
 async function fly(method, p, body) {
@@ -195,12 +219,16 @@ function buildServer(userId, ghToken, svc) {
     },
     async ({ repo, new_repo_name, instructions, base_branch }) => {
       if (!repo && !new_repo_name) return ko("Indique repo (dépôt existant) ou new_repo_name (nouveau projet).");
-      if (!ghToken || ghToken.includes("{{") || ghToken.length < 20) {
-        return ko("Token GitHub manquant. L'utilisateur doit le saisir dans les réglages du serveur MCP « sandbox ».");
+      // Le compte GitHub connecté via LibreChat passe en premier ; l'ancien token saisi à la main reste un secours.
+      const gh = (await linkedToken(userId)) || (ghToken && !ghToken.includes("{{") && ghToken.length >= 20 ? ghToken : "");
+      if (!gh) {
+        return ko(
+          `GitHub n'est pas encore connecté pour cet utilisateur. Donne-lui ce lien tel quel pour connecter son compte GitHub (une seule fois, valable 30 minutes), puis il pourra redemander sa tâche : ${connectLink(userId)}`
+        );
       }
       const r = reserveJob(userId, repo || `(nouveau)/${new_repo_name}`, base_branch, instructions);
       if (r.error) return ko(r.error);
-      creds.set(r.id, { ghToken, repo: repo || null, newRepo: new_repo_name || null, base: base_branch || null, instructions, svc, exp: Date.now() + 5 * 60000 });
+      creds.set(r.id, { ghToken: gh, repo: repo || null, newRepo: new_repo_name || null, base: base_branch || null, instructions, svc, exp: Date.now() + 5 * 60000 });
       try {
         await launch(r.id, userId, r.token);
       } catch (err) {
