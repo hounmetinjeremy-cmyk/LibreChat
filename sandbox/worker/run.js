@@ -7,7 +7,8 @@ const ROOT = "/work/repo";
 let ghToken = "";
 let reported = false;
 
-const scrub = (s) => (ghToken ? String(s).split(ghToken).join("***") : String(s));
+const basicAuth = () => Buffer.from(`x-access-token:${ghToken}`).toString("base64");
+const scrub = (s) => (ghToken ? String(s).split(ghToken).join("***").split(basicAuth()).join("***") : String(s));
 const trunc = (s, n = 4000) => (s.length > n ? s.slice(0, n / 2) + "\n...[tronqué]...\n" + s.slice(-n / 2) : s);
 
 async function api(p, opts = {}) {
@@ -38,10 +39,19 @@ setTimeout(async () => {
 }, Number(MAX_RUNTIME_SEC) * 1000);
 
 // ------------------------------------------------------------------ git / GitHub
-const authHeader = () => "AUTHORIZATION: basic " + Buffer.from(`x-access-token:${ghToken}`).toString("base64");
+// L'en-tête d'authentification passe par l'environnement (et non par les arguments) :
+// si git échoue, le message d'erreur de Node recopie la ligne de commande, jamais l'environnement.
+const gitEnv = () => ({
+  ...process.env,
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_CONFIG_COUNT: "1",
+  GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+  GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basicAuth()}`,
+});
 const git = (args, cwd = ROOT) =>
-  execFileSync("git", ["-c", `http.https://github.com/.extraheader=${authHeader()}`, "-c", "user.name=AI Fix Bot", "-c", "user.email=ai-fix-bot@users.noreply.github.com", ...args], {
+  execFileSync("git", ["-c", "user.name=AI Fix Bot", "-c", "user.email=ai-fix-bot@users.noreply.github.com", ...args], {
     cwd,
+    env: gitEnv(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 300000,
