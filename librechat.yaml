@@ -64,7 +64,8 @@ endpoints:
 # Aube est présélectionné pour toute nouvelle conversation.
 # mcpServers : outils activés automatiquement dans chaque conversation avec ce modèle.
 # Seul « sandbox » (terminal jetable) est automatique : un serveur avec connexion OAuth (github,
-# cloudflare) ne doit PAS être ici, sinon chaque message attend la connexion et reste bloqué.
+# cloudflare, connexion-github) ne doit PAS être ici, sinon chaque message attend la connexion
+# et reste bloqué.
 # Le bouton + (menu des serveurs MCP) reste visible : les autres serveurs y restent accessibles.
 modelSpecs:
   enforce: true
@@ -101,12 +102,25 @@ mcpServers:
     requiresOAuth: true
     timeout: 60000
 
+  # Connexion GitHub intégrée à LibreChat (api/server/routes/githubLink.js) : apparaît dans le menu +,
+  # l'utilisateur clique « Connecter », autorise GitHub, et son token est rangé chiffré pour le terminal.
+  # X-Link-Key prouve que l'appel vient bien de ce LibreChat avant de rattacher le compte à l'utilisateur.
+  connexion-github:
+    type: streamable-http
+    url: https://librechat-a7cwuq.fly.dev/api/github-link/mcp
+    requiresOAuth: true
+    headers:
+      X-User-Id: "{{LIBRECHAT_USER_ID}}"
+      X-Link-Key: "${ORCHESTRATOR_SECRET}"
+    timeout: 60000
+
   # Terminal Linux jetable sur Fly.io : LibreChat ne fait que commander l'orchestrateur, qui crée un
   # conteneur par tâche (clone, vérifications, correction, déploiement, push, PR) puis le détruit.
   # chatMenu: false = ce serveur seul est caché du menu + ; les autres serveurs y restent visibles.
   # Il est activé en arrière-plan pour Aube et Soleil (modelSpecs.mcpServers) ; l'IA décide seule.
-  # GitHub : plus de token à saisir. L'utilisateur connecte son compte GitHub une fois (lien donné par
-  # l'outil, route /api/github-link de LibreChat) ; l'orchestrateur récupère son token chiffré.
+  # GitHub : plus de token à saisir. L'utilisateur connecte son compte GitHub une fois, soit par le
+  # bouton « connexion-github » du menu +, soit par le lien donné par l'outil ; l'orchestrateur
+  # récupère son token chiffré (route /api/github-link de LibreChat).
   # L'identité vient de LibreChat (non falsifiable) ; quotas de tâches et de tokens par utilisateur.
   # Secret Fly : ORCHESTRATOR_SECRET.
   sandbox:
