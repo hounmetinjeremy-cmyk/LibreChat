@@ -9,11 +9,15 @@
     { id: 'cloudflare', label: 'Cloudflare Workers AI' }
   ];
   var LABEL = { deepseek: 'DeepSeek', gemini: 'Gemini', cloudflare: 'Cloudflare' };
+  /* Listes de secours, utilisées seulement si la liste en direct du fournisseur est indisponible. */
   var MODELS = {
     deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
     gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.5-flash'],
-    cloudflare: ['@cf/meta/llama-3.1-8b-instruct', '@cf/openai/gpt-oss-120b', '@cf/openai/gpt-oss-20b']
+    cloudflare: ['@cf/openai/gpt-oss-120b', '@cf/openai/gpt-oss-20b', '@cf/zai-org/glm-4.7-flash', '@cf/google/gemma-4-26b-a4b-it', '@cf/moonshotai/kimi-k2.6']
   };
+  var CUSTOM = '__custom__';
+  var live = {};
+  var liveBox = null;
   var intro = document.getElementById('intro');
   var fieldsBox = document.getElementById('fields');
   var saveBtn = document.getElementById('save');
@@ -85,9 +89,61 @@
     ref.input.value = '';
   }
 
-  function fillModels(list, provider) {
-    list.textContent = '';
-    (MODELS[provider] || []).forEach(function (m) { list.appendChild(el('option', { value: m })); });
+  /* Liste en direct du fournisseur si on l'a, sinon liste de secours. */
+  function modelsFor(provider) {
+    var l = live[provider];
+    return l && l.models && l.models.length ? l.models : (MODELS[provider] || []);
+  }
+
+  /* Remplit le menu des modèles et l'aligne sur la valeur du champ caché (celle qu'on enregistre). */
+  function syncSelect(r) {
+    var provider = r.provider.value;
+    var list = modelsFor(provider);
+    var l = live[provider];
+    var known = Boolean(l && l.models && l.models.length);
+    var current = r.model.value.trim();
+    r.select.textContent = '';
+    list.forEach(function (m) { r.select.appendChild(el('option', { value: m, textContent: m })); });
+    if (current && list.indexOf(current) === -1) {
+      var note = known ? ' (n’existe plus chez ce fournisseur ?)' : ' (actuel)';
+      r.select.appendChild(el('option', { value: current, textContent: current + note }));
+    }
+    r.select.appendChild(el('option', { value: CUSTOM, textContent: 'Autre modèle (saisir le nom)…' }));
+    if (!current && list.length) { r.model.value = list[0]; current = list[0]; }
+    r.select.value = current || CUSTOM;
+    r.model.style.display = r.select.value === CUSTOM ? '' : 'none';
+  }
+
+  /* Demande au serveur la liste des modèles de chaque fournisseur (avec les clés enregistrées). */
+  function loadLive() {
+    if (!liveBox) { return Promise.resolve(); }
+    liveBox.textContent = 'Chargement des modèles de chaque fournisseur…';
+    liveBox.className = 'state';
+    return api('/api/admin-models/available', 'GET').then(function (data) {
+      live = data || {};
+      ROLES.forEach(function (role) { syncSelect(refs[role.id]); });
+      liveBox.textContent = PROVIDERS.map(function (p) {
+        var l = live[p.id] || {};
+        var n = (l.models || []).length;
+        return p.label + ' : ' + (n ? n + ' modèles' : (l.error || 'aucun'));
+      }).join(' · ');
+      liveBox.className = 'state ok';
+    }).catch(function (e) {
+      liveBox.textContent = 'Liste en direct indisponible (' + (e && e.message ? e.message : 'erreur') + ') : liste de secours utilisée.';
+      liveBox.className = 'state';
+    });
+  }
+
+  function buildLive() {
+    liveBox = el('div', { className: 'state' });
+    var refresh = el('button', { type: 'button', textContent: 'Actualiser la liste des modèles' });
+    refresh.addEventListener('click', function () { loadLive(); });
+    fieldsBox.appendChild(el('div', { className: 'card' }, [
+      el('h2', { textContent: 'Modèles disponibles' }),
+      el('div', { className: 'help', textContent: 'La liste de chaque fournisseur est demandée en direct avec ta clé : les modèles retirés n’apparaissent plus et les nouveaux arrivent tout seuls.' }),
+      liveBox,
+      el('div', { className: 'row' }, [refresh])
+    ]));
   }
 
   /* Clés : on peut en mettre plusieurs, le serveur bascule tout seul de l’une à l’autre. */
@@ -118,23 +174,32 @@
 
   function buildRole(role) {
     var provider = el('select', {}, PROVIDERS.map(function (p) { return el('option', { value: p.id, textContent: p.label }); }));
-    var model = el('input', { type: 'text', autocomplete: 'off', autocapitalize: 'off', spellcheck: false });
-    var list = el('datalist', { id: 'models-' + role.id });
-    model.setAttribute('list', list.id);
+    var model = el('input', { type: 'text', autocomplete: 'off', autocapitalize: 'off', spellcheck: false, placeholder: 'Nom exact du modèle' });
+    var select = el('select', {});
     var chain = el('div', { className: 'state' });
     provider.addEventListener('change', function () {
-      fillModels(list, provider.value);
-      model.value = (MODELS[provider.value] || [''])[0];
+      model.value = modelsFor(provider.value)[0] || '';
+      syncSelect(refs[role.id]);
+    });
+    select.addEventListener('change', function () {
+      if (select.value === CUSTOM) {
+        model.value = '';
+        model.style.display = '';
+        model.focus();
+        return;
+      }
+      model.value = select.value;
+      model.style.display = 'none';
     });
     var card = el('div', { className: 'card' }, [
       el('h2', { textContent: role.title }),
       el('div', { className: 'help', textContent: role.help + ' Fournisseur essayé en premier ; si sa clé échoue, un autre prend le relais.' }),
       el('div', { className: 'field' }, [el('label', { textContent: 'Fournisseur préféré' }), provider]),
-      el('div', { className: 'field' }, [el('label', { textContent: 'Modèle' }), model, list]),
+      el('div', { className: 'field' }, [el('label', { textContent: 'Modèle' }), select, model]),
       chain
     ]);
     fieldsBox.appendChild(card);
-    refs[role.id] = { provider: provider, model: model, list: list, chain: chain };
+    refs[role.id] = { provider: provider, model: model, select: select, chain: chain };
   }
 
   function buildVision() {
@@ -160,8 +225,8 @@
       var d = data[role.id] || {};
       var r = refs[role.id];
       r.provider.value = d.provider || 'deepseek';
-      fillModels(r.list, r.provider.value);
       r.model.value = d.model || '';
+      syncSelect(r);
       var chain = d.chain || [];
       if (chain.length) {
         r.chain.textContent = 'Ordre d’essai : ' + chain.map(function (p) { return LABEL[p] || p; }).join(' → ');
@@ -219,6 +284,7 @@
     api('/api/admin-models', 'PUT', body)
       .then(function (d) {
         renderModels(d);
+        loadLive();
         if (!videoKey) { return null; }
         return api('/api/admin-keys', 'PUT', { video: videoKey }).then(renderVideo);
       })
@@ -242,12 +308,13 @@
         token = data.token;
         intro.textContent = 'Ajoute tes clés API (plusieurs possibles : bascule automatique) et choisis le modèle d’Aube et de Soleil. Les utilisateurs voient seulement « Aube » et « Soleil ».';
         buildKeys();
+        buildLive();
         ROLES.forEach(buildRole);
         buildVision();
         buildVideo();
         saveBtn.hidden = false;
         return api('/api/admin-models', 'GET').then(renderModels)
-          .then(function () { return api('/api/admin-keys', 'GET'); }).then(renderVideo);
+          .then(function () { loadLive(); return api('/api/admin-keys', 'GET'); }).then(renderVideo);
       })
       .catch(function (e) { setStatus(e && e.message ? e.message : 'Erreur de chargement.', 'err'); })
       .then(function () { loading = false; });

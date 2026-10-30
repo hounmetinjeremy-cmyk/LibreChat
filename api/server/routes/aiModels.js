@@ -32,7 +32,7 @@ const AUTO_MODELS = {
   aube: {
     deepseek: 'deepseek-v4-flash',
     gemini: 'gemini-2.5-flash',
-    cloudflare: '@cf/meta/llama-3.1-8b-instruct',
+    cloudflare: '@cf/zai-org/glm-4.7-flash',
   },
   soleil: {
     deepseek: 'deepseek-v4-pro',
@@ -40,6 +40,26 @@ const AUTO_MODELS = {
     cloudflare: '@cf/openai/gpt-oss-120b',
   },
 };
+/** Modèles retirés par leur fournisseur : jamais utilisés, même s'ils sont encore enregistrés en base. */
+const RETIRED_MODELS = new Set([
+  '@cf/meta/llama-3.1-8b-instruct',
+  '@cf/meta/llama-3.1-8b-instruct-awq',
+  '@cf/meta/llama-3.1-70b-instruct',
+  '@cf/meta/llama-3-8b-instruct',
+  '@cf/meta/llama-3-8b-instruct-awq',
+  '@hf/meta-llama/meta-llama-3-8b-instruct',
+  '@cf/meta/llama-2-7b-chat-int8',
+  '@cf/meta/llama-2-7b-chat-fp16',
+  '@cf/mistral/mistral-7b-instruct-v0.1',
+  '@hf/mistral/mistral-7b-instruct-v0.2',
+  '@hf/google/gemma-7b-it',
+  '@cf/google/gemma-3-12b-it',
+  '@hf/nousresearch/hermes-2-pro-mistral-7b',
+]);
+/** Délai maximum avant la première réponse d'un fournisseur ; au-delà, on passe au suivant. */
+const FIRST_RESPONSE_MS = 45000;
+/** Délai maximum pour demander la liste des modèles à un fournisseur. */
+const MODEL_LIST_MS = 10000;
 const DEFAULT_VISION_MODEL = 'gemini-2.5-flash';
 const GEMINI_NATIVE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DOC_ID = 'models';
@@ -152,7 +172,7 @@ function providerUrl(cfg, provider) {
 
 /** Le nom du modèle correspond-il au fournisseur ? (évite « deepseek-… » envoyé à Gemini) */
 function modelFits(provider, model) {
-  if (!model) {
+  if (!model || RETIRED_MODELS.has(model)) {
     return false;
   }
   if (provider === 'gemini') {
@@ -223,6 +243,7 @@ const shouldSwitch = (status) =>
   status === 403 ||
   status === 404 ||
   status === 408 ||
+  status === 410 ||
   status === 429 ||
   status >= 500;
 
@@ -398,23 +419,30 @@ async function handleChat(req, res) {
       if (c.provider === 'gemini' && typeof payload.max_tokens === 'number') {
         payload.max_tokens = Math.max(payload.max_tokens, 4096);
       }
+      const attempt = new AbortController();
+      const relay = () => attempt.abort();
+      ctrl.signal.addEventListener('abort', relay, { once: true });
+      const timer = setTimeout(relay, FIRST_RESPONSE_MS);
       try {
         up = await fetch(c.url, {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: `Bearer ${c.key}` },
           body: JSON.stringify(payload),
-          signal: ctrl.signal,
+          signal: attempt.signal,
         });
       } catch (e) {
         if (ctrl.signal.aborted) {
           return res.end();
         }
-        logger.warn(`[aiModels] ${PROVIDER_LABELS[c.provider]} injoignable pour « ${LABELS[role]} »`);
-        failures.push(`${PROVIDER_LABELS[c.provider]} injoignable`);
+        const why = attempt.signal.aborted ? 'trop lent' : 'injoignable';
+        logger.warn(`[aiModels] ${PROVIDER_LABELS[c.provider]} ${why} pour « ${LABELS[role]} »`);
+        failures.push(`${PROVIDER_LABELS[c.provider]} ${why}`);
         if (isLast) {
-          throw e;
+          return res.status(504).json(err(`${failures.join(' → ')}. Réessaie, ou choisis un autre modèle dans la page admin.`));
         }
         continue;
+      } finally {
+        clearTimeout(timer);
       }
       if (!up.ok) {
         failures.push(`${PROVIDER_LABELS[c.provider]} ${up.status}`);
@@ -606,6 +634,82 @@ adminRouter.put('/api/admin-models', requireJwtAuth, requireAdmin, async (req, r
     logger.error('[aiModels] enregistrement impossible', e);
     return res.status(500).json({ message: 'Enregistrement impossible' });
   }
+});
+
+/* ---------- liste en direct des modèles de chaque fournisseur ---------- */
+
+async function getJson(url, headers) {
+  const r = await fetch(url, { headers, signal: AbortSignal.timeout(MODEL_LIST_MS) });
+  if (!r.ok) {
+    throw new Error(`réponse ${r.status}`);
+  }
+  return r.json();
+}
+
+/** Chaque fonction renvoie les noms de modèles de texte réellement proposés au moment de l'appel. */
+const LISTERS = {
+  async deepseek(_cfg, key) {
+    const data = await getJson('https://api.deepseek.com/models', { authorization: `Bearer ${key}` });
+    return (data.data || []).map((m) => m.id);
+  },
+  async gemini(_cfg, key) {
+    const ids = [];
+    let pageToken = '';
+    do {
+      const suffix = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
+      const data = await getJson(`${GEMINI_NATIVE}?pageSize=1000${suffix}`, { 'x-goog-api-key': key });
+      for (const m of data.models || []) {
+        if ((m.supportedGenerationMethods || []).includes('generateContent')) {
+          ids.push(String(m.name || '').replace(/^models\//, ''));
+        }
+      }
+      pageToken = data.nextPageToken || '';
+    } while (pageToken);
+    return ids.filter((id) => /^gemini/i.test(id));
+  },
+  async cloudflare(cfg, key) {
+    const account = accountId(cfg);
+    if (!account) {
+      throw new Error('ID de compte Cloudflare manquant');
+    }
+    const base = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/ai/models/search`;
+    const ids = [];
+    for (let page = 1; page <= 10; page++) {
+      const data = await getJson(`${base}?task=Text%20Generation&per_page=100&page=${page}`, {
+        authorization: `Bearer ${key}`,
+      });
+      const batch = (data.result || []).map((m) => m.name);
+      ids.push(...batch);
+      if (batch.length < 100) {
+        break;
+      }
+    }
+    return ids.filter((id) => /^@cf\//i.test(id));
+  },
+};
+
+const cleanModels = (ids) =>
+  Array.from(new Set(ids.filter((id) => MODEL_RE.test(id) && !RETIRED_MODELS.has(id)))).sort();
+
+adminRouter.get('/api/admin-models/available', requireJwtAuth, requireAdmin, async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const cfg = await loadConfig(true);
+  const entries = await Promise.all(
+    Object.keys(PROVIDERS).map(async (provider) => {
+      const key = poolKey(cfg, provider);
+      if (!key) {
+        return [provider, { models: [], error: 'aucune clé enregistrée' }];
+      }
+      try {
+        const models = cleanModels(await LISTERS[provider](cfg, key));
+        return [provider, { models, error: models.length ? '' : 'liste vide' }];
+      } catch (e) {
+        logger.warn(`[aiModels] liste des modèles ${PROVIDER_LABELS[provider]} impossible : ${e.message}`);
+        return [provider, { models: [], error: e.message }];
+      }
+    }),
+  );
+  return res.json(Object.fromEntries(entries));
 });
 
 module.exports = { proxyRouter, adminRouter };
