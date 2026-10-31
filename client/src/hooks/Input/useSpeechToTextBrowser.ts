@@ -9,7 +9,8 @@ import store from '~/store';
 type SpeechRecognitionController = Pick<
   typeof SpeechRecognitionImport,
   'startListening' | 'stopListening'
->;
+> &
+  Partial<Pick<typeof SpeechRecognitionImport, 'abortListening'>>;
 type SpeechRecognitionModule = Partial<SpeechRecognitionController> & {
   default?: Partial<SpeechRecognitionController>;
 };
@@ -89,6 +90,23 @@ const useSpeechToTextBrowser = (
     };
   }, [setText, onTranscriptionComplete, resetTranscript, finalTranscript, autoSendText]);
 
+  /** Oublie tout ce qui a été dicté (sinon le texte déjà envoyé revient dans le champ de saisie). */
+  const clearTranscript = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    if (isListening === true) {
+      if (SpeechRecognition?.abortListening) {
+        void SpeechRecognition.abortListening();
+      } else {
+        void SpeechRecognition?.stopListening?.();
+      }
+    }
+    resetTranscript();
+    lastTranscript.current = null;
+    lastInterim.current = null;
+  }, [isListening, resetTranscript]);
+
   const toggleListening = useCallback(() => {
     if (!browserSupportsSpeechRecognition) {
       showToast({
@@ -121,6 +139,10 @@ const useSpeechToTextBrowser = (
     if (isListening === true) {
       SpeechRecognition.stopListening();
     } else {
+      /** Nouvelle dictée : on repart de zéro pour ne pas réinjecter l'ancien texte. */
+      resetTranscript();
+      lastTranscript.current = null;
+      lastInterim.current = null;
       SpeechRecognition.startListening({
         language: languageSTT,
         continuous: autoTranscribeAudio,
@@ -133,6 +155,7 @@ const useSpeechToTextBrowser = (
     isMicrophoneAvailable,
     languageSTT,
     localize,
+    resetTranscript,
     showToast,
     sttExternal,
   ]);
@@ -142,6 +165,7 @@ const useSpeechToTextBrowser = (
     isLoading: false,
     startRecording: toggleListening,
     stopRecording: toggleListening,
+    clearTranscript,
   };
 };
 
