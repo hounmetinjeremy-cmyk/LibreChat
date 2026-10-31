@@ -1,5 +1,6 @@
 import { memo, useMemo, useState } from 'react';
 import { ContentTypes } from 'librechat-data-provider';
+import SandboxJobLive from './SandboxJobLive';
 
 type Step = {
   key: string;
@@ -67,6 +68,26 @@ const buildSteps = (content: Array<any> | undefined, isSubmitting: boolean): Ste
   return steps;
 };
 
+/** Numéro de la dernière tâche lancée par run_task dans ce message (lu dans la réponse de l'outil). */
+const findJobId = (content: Array<any> | undefined): string | undefined => {
+  let found: string | undefined;
+  (content ?? []).forEach((part) => {
+    if (!part || part.type !== ContentTypes.TOOL_CALL) {
+      return;
+    }
+    const tc: any = part[ContentTypes.TOOL_CALL] ?? {};
+    if (typeof tc.name !== 'string' || !tc.name.startsWith('run_task')) {
+      return;
+    }
+    const out = typeof tc.output === 'string' ? tc.output : JSON.stringify(tc.output ?? '');
+    const m = /T[âa]che ([a-f0-9]{12}) lanc/.exec(out);
+    if (m) {
+      found = m[1];
+    }
+  });
+  return found;
+};
+
 export const hideActivity = (content?: Array<any>, attachments?: unknown): Array<any> | undefined => {
   if (!content) {
     return content;
@@ -97,6 +118,7 @@ export const hideActivity = (content?: Array<any>, attachments?: unknown): Array
 const ResumeSheet = memo(function ResumeSheet({ content, isSubmitting, nested }: Props) {
   const [open, setOpen] = useState(false);
   const steps = useMemo(() => buildSteps(content, !!isSubmitting), [content, isSubmitting]);
+  const jobId = useMemo(() => findJobId(content), [content]);
   if (nested || steps.length === 0) {
     return null;
   }
@@ -114,6 +136,7 @@ const ResumeSheet = memo(function ResumeSheet({ content, isSubmitting, nested }:
         Résumé · {steps.length} {steps.length > 1 ? 'étapes' : 'étape'}
         {activeStep ? ' · ' + activeStep.title + '…' : ''}
       </button>
+      {jobId ? <SandboxJobLive jobId={jobId} /> : null}
       {open && (
         <div
           className="fixed inset-0 z-[1000] flex items-end bg-black/40"

@@ -309,7 +309,7 @@ const ok = (t) => ({ content: [{ type: "text", text: t }] });
 const ko = (t) => ({ content: [{ type: "text", text: t }], isError: true });
 
 function buildServer(userId, ghHeader, svcHeaders) {
-  const s = new McpServer({ name: "fly-sandboxes", version: "2.3.0" });
+  const s = new McpServer({ name: "fly-sandboxes", version: "2.4.0" });
 
   s.tool(
     "find_repos",
@@ -336,7 +336,7 @@ function buildServer(userId, ghHeader, svcHeaders) {
 
   s.tool(
     "run_task",
-    "Exécute une tâche de développement ou de déploiement dans un conteneur Linux isolé et jetable : clone d'un dépôt GitHub (ou création d'un nouveau projet), vérifications automatiques, correction de la première erreur par l'IA, commandes (Vercel, Cloudflare, Render, Fly...), push et pull request. Appeler UNE seule fois ; retourne un job_id tout de suite, puis suivre avec get_job. Ne pas lire les fichiers soi-même. Le nom du dépôt doit être exact : s'il ne l'est pas, appeler find_repos d'abord. Clés de services : si la tâche demande Vercel, Cloudflare, Render ou Fly.io, demande à l'utilisateur de générer sa clé (token) sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre correspondant. Ne demande que les clés dont la tâche a besoin.",
+    "Exécute une tâche de développement ou de déploiement dans un conteneur Linux isolé et jetable : clone d'un dépôt GitHub (ou création d'un nouveau projet), vérifications automatiques, correction des erreurs une à la fois par l'IA, commandes (Vercel, Cloudflare, Render, Fly...), push et pull request. Appeler UNE seule fois ; retourne un job_id tout de suite, puis suivre avec get_job. Ne pas lire les fichiers soi-même. Le nom du dépôt doit être exact : s'il ne l'est pas, appeler find_repos d'abord. Clés de services : si la tâche demande Vercel, Cloudflare, Render ou Fly.io, demande à l'utilisateur de générer sa clé (token) sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre correspondant. Ne demande que les clés dont la tâche a besoin.",
     {
       repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional().describe("Dépôt existant : proprietaire/nom"),
       new_repo_name: z.string().regex(/^[\w.-]{1,100}$/).optional().describe("Nom d'un NOUVEAU dépôt privé à créer (au lieu de repo)"),
@@ -367,7 +367,7 @@ function buildServer(userId, ghHeader, svcHeaders) {
         db.prepare("UPDATE usage SET jobs=MAX(jobs-1,0) WHERE user_id=? AND day=?").run(userId, today());
         return ko("Impossible de démarrer le conteneur pour le moment.");
       }
-      return ok(`Tâche ${r.id} lancée. Le conteneur se détruit seul à la fin. Ensuite : écris à l'utilisateur une phrase courte du genre « Travail en cours, patiente un peu, je te fais le retour dès que c'est fini. », puis appelle get_job (job_id=${r.id}, wait_seconds=45) et recommence tant que le statut est running. Quand il est success ou failed, donne le résultat.`);
+      return ok(`Tâche ${r.id} lancée. Le conteneur se détruit seul à la fin. Un panneau de suivi en direct s'affiche déjà sous ton message : n'écris pas les étapes. Écris seulement une phrase courte du genre « Travail en cours, patiente un peu, je te fais le retour dès que c'est fini. », puis appelle get_job (job_id=${r.id}, wait_seconds=45) en boucle, sans écrire de texte entre les appels, tant que le statut est running. Quand il est success ou failed, donne le résultat.`);
     }
   );
 
@@ -390,7 +390,7 @@ function buildServer(userId, ghHeader, svcHeaders) {
       const running = j.status === "queued" || j.status === "running";
       const activite = String(j.activity || "").split("\n").filter(Boolean).slice(-8);
       const out = { job_id: j.id, repo: j.repo, status: j.status, summary: j.summary, branch: j.branch, pull_request: j.pr_url, tokens_used: j.tokens_used, activite };
-      if (running) out.consigne = "Toujours en cours : dis en une phrase où ça en est d'après activite, puis rappelle get_job avec wait_seconds=45.";
+      if (running) out.consigne = "Toujours en cours : n'écris rien, rappelle get_job avec wait_seconds=45. Le panneau en direct montre déjà les étapes.";
       return ok(JSON.stringify(out));
     }
   );
@@ -420,6 +420,28 @@ function mcpAuth(req, res, next) {
   req.userId = user;
   next();
 }
+
+// Suivi en direct pour l'interface LibreChat (route /api/sandbox-job) : même identité que le serveur MCP,
+// un utilisateur ne voit que ses propres tâches.
+app.get("/jobs/:id", mcpAuth, (req, res) => {
+  if (!/^[a-f0-9]{12}$/.test(req.params.id)) return res.status(400).json({ error: "tâche invalide" });
+  const j = db.prepare("SELECT * FROM jobs WHERE id=? AND user_id=?").get(req.params.id, req.userId);
+  if (!j) return res.status(404).json({ error: "tâche introuvable" });
+  const running = j.status === "queued" || j.status === "running";
+  res.set("Cache-Control", "no-store").json({
+    job_id: j.id,
+    repo: j.repo,
+    status: j.status,
+    running,
+    summary: j.summary,
+    branch: j.branch,
+    pull_request: j.pr_url,
+    tokens_used: j.tokens_used,
+    activity: String(j.activity || "").split("\n").filter(Boolean).slice(-40),
+    created_at: j.created_at,
+    finished_at: j.finished_at,
+  });
+});
 
 app.post("/mcp", mcpAuth, express.json({ limit: "1mb" }), async (req, res) => {
   const server = buildServer(req.userId, String(req.headers["x-github-token"] || ""), svcFrom(req.headers));
