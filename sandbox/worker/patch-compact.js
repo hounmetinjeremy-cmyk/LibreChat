@@ -1,6 +1,6 @@
 /**
  * Allège l'historique renvoyé au modèle à chaque étape (sandbox/worker/run.js).
- * Avant : seules les sorties d'outils anciennes étaient raccourcies ; le contenu complet de chaque
+ * Avant : seules les sorties d'outils anciennes étaient raccourcies ; le contenu complet chaque
  * fichier écrit (write_file) restait dans l'historique et était renvoyé à chaque étape.
  * Après : tout ce qui est plus ancien que les 6 derniers messages est réduit à quelques mots
  * (sorties d'outils, contenus de fichiers écrits, rapports de vérification). Les 2 premiers
@@ -8,7 +8,7 @@
  * Aucun message n'est supprimé : les appels d'outils et leurs résultats restent appariés.
  * Si l'ancre est introuvable, le build échoue (l'ancienne image reste en service).
  */
-const fs = require('fs');
+import fs from 'fs';
 
 const file = 'run.js';
 let src = fs.readFileSync(file, 'utf8');
