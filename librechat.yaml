@@ -8,6 +8,20 @@ interface:
     create: true
     share: false
 
+# Dictée vocale : bouton micro dans la zone de saisie, le texte s'écrit en direct pendant que tu parles
+# (moteur du navigateur : HTTPS obligatoire, surtout Chrome).
+# autoSendText: -1 = pas d'envoi automatique : tu appuies toi-même sur la flèche quand tu as fini.
+speech:
+  speechTab:
+    conversationMode: false
+    advancedMode: false
+    speechToText:
+      engineSTT: "browser"
+      languageSTT: "French (France)"
+      autoTranscribeAudio: true
+      decibelValue: -45
+      autoSendText: -1
+
 endpoints:
   # Limite d'étapes par message. Une étape = un passage du modèle OU des outils.
   # Sans outil : 1 étape. Un tour d'outil = 3 étapes (modèle, outil, modèle qui lit le résultat).
