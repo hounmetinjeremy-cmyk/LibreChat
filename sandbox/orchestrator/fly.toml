@@ -20,7 +20,7 @@ primary_region = 'ams'
   DAILY_JOBS_PER_USER = '5'
   TOKENS_PER_JOB = '150000'
   TOKENS_PER_USER_DAY = '400000'
-  LLM_MODEL = 'gemini-2.5-flash'
+  LLM_MODEL = 'gemini-3-flash-preview'
 
 [http_service]
   internal_port = 8080
