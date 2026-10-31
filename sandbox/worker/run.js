@@ -76,6 +76,9 @@ const sh = (command, timeout = 120000) => {
   return { code: r.status ?? "timeout", out: `${r.stdout || ""}${r.stderr || ""}` };
 };
 
+// Démarrage de l'application : 12 s maximum. Code 124 (délai écoulé) = elle tournait encore = bon, sauf erreur fatale dans sa sortie.
+const SMOKE = `{ L=$(mktemp); PORT=3000 timeout -k 2 12 npm start > "$L" 2>&1; c=$?; echo "--- démarrage de l'application (npm start) ---"; tail -c 2500 "$L"; if [ $c -eq 124 ]; then ! grep -Eq 'EADDRINUSE|Cannot find module|ERR_MODULE_NOT_FOUND|SyntaxError|ReferenceError|UnhandledPromiseRejection|Error: listen|TypeError' "$L"; exit $?; fi; exit $c; }`;
+
 // Vérification du projet (test ou build). Le terminal la relance LUI-MÊME après chaque fichier modifié :
 // l'IA ne la relance pas et reçoit l'erreur exacte telle quelle.
 // failedAtStart : la vérification échouait au départ (sinon rien à réparer, pas de fin automatique).
@@ -90,10 +93,20 @@ function autoChecks() {
     const inst = sh(has("package-lock.json") ? "npm ci --no-audit --no-fund" : "npm install --no-audit --no-fund", 240000);
     if (inst.code !== 0) return `installation npm échouée (code ${inst.code}) :\n${tail(inst.out)}`;
     const cmd = scripts.test && !/no test specified/.test(scripts.test) ? "npm test" : scripts.build ? "npm run build" : null;
-    if (!cmd) return "Aucun script de test ou de build.";
-    const r = sh(`${cmd} 2>&1`, 240000);
-    CHECK = { label: cmd, command: `${cmd} 2>&1`, failedAtStart: r.code !== 0 };
-    return `${cmd} -> code ${r.code}\n${tail(r.out)}`;
+    if (!cmd && !scripts.start) return "Aucun script de test, de build ou de démarrage.";
+    // Démarrage de l'application : si le test ou le build passe, le terminal lance « npm start » 12 s.
+    // Elle tient 12 s sans erreur fatale = bon ; elle plante ou affiche une erreur fatale = erreur donnée à l'IA.
+    const parts = [];
+    if (cmd) parts.push(`${cmd} 2>&1`);
+    if (scripts.start) {
+      if (scripts.build && cmd !== "npm run build") parts.push("npm run build 2>&1");
+      parts.push(SMOKE);
+    }
+    const label = [cmd, scripts.start ? "démarrage" : null].filter(Boolean).join(" + ");
+    const command = parts.join(" && ");
+    const r = sh(command, 280000);
+    CHECK = { label, command, failedAtStart: r.code !== 0 };
+    return `${label} -> code ${r.code}\n${tail(r.out)}`;
   }
   if (has("requirements.txt") || has("pyproject.toml")) {
     const r = sh("python3 -m pytest -x -q 2>&1", 240000);
@@ -199,7 +212,7 @@ const toolDefs = [
   T("finish", "Termine la tâche avec un court résumé en deux parties : Corrigé et Reste à faire.", { summary: { type: "string" } }, ["summary"]),
 ];
 
-const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Les extraits des fichiers cités par l'erreur te sont déjà donnés : ne les relis pas. Pour trouver où quelque chose est défini ou utilisé, utilise search_code plutôt que de lire des fichiers entiers. Pour modifier un fichier existant, utilise edit_file (remplace un court extrait exact) ; write_file sert seulement à créer un nouveau fichier. Ne réécris jamais un fichier entier pour changer quelques lignes. Après chaque fichier modifié, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
+const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Les extraits des fichiers cités par l'erreur te sont déjà donnés : ne les relis pas. Pour trouver où quelque chose est défini ou utilisé, utilise search_code plutôt que de lire des fichiers entiers. Pour modifier un fichier existant, utilise edit_file (remplace un court extrait exact) ; write_file sert seulement à créer un nouveau fichier. Ne réécris jamais un fichier entier pour changer quelques lignes. Après chaque fichier modifié, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. La vérification comprend aussi le démarrage de l'application (npm start, 12 s) : si elle plante au démarrage, tu reçois l'erreur de démarrage. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
 
 // Historique allégé : tout ce qui est plus ancien que les 6 derniers messages est réduit à quelques mots
 // (sorties d'outils, contenus des fichiers écrits, rapports de vérification). Les 2 premiers messages
@@ -297,7 +310,7 @@ async function agent(first) {
     if (dirty && CHECK && reruns < 8) {
       reruns++;
       progress(`Vérification relancée (${CHECK.label})`);
-      const r = sh(CHECK.command, 240000);
+      const r = sh(CHECK.command, 280000);
       progress(r.code === 0 ? "Vérification réussie" : `Vérification en erreur (code ${r.code})`);
       if (r.code === 0 && CHECK.failedAtStart) {
         const done = notes.length ? notes.join(" ; ") : "les erreurs de départ";
@@ -346,7 +359,7 @@ try {
   const branch = job.newRepo ? null : `ai-fix/${job.id}`;
   if (branch) git(["checkout", "-b", branch]);
 
-  if (!job.newRepo) progress("Vérifications automatiques en cours (installation, test ou build)");
+  if (!job.newRepo) progress("Vérifications automatiques en cours (installation, test ou build, démarrage)");
   const checks = job.newRepo ? "Projet vide, rien à vérifier." : autoChecks();
   progress("Vérifications terminées, l'IA analyse les erreurs");
   const files = git(["ls-files"]).split("\n").filter(Boolean);
