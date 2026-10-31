@@ -9,6 +9,7 @@ require('./patch-ai-models.js');
 require('./patch-placeholder.js');
 require('./patch-github-link.js');
 require('./patch-sandbox-job.js');
+require('./patch-token-balance.js');
 
 const fs = require('fs');
 
