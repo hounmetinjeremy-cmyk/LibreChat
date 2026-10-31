@@ -76,6 +76,11 @@ const sh = (command, timeout = 120000) => {
   return { code: r.status ?? "timeout", out: `${r.stdout || ""}${r.stderr || ""}` };
 };
 
+// Vérification du projet (test ou build). Le terminal la relance LUI-MÊME après chaque fichier modifié :
+// l'IA ne la relance pas et reçoit l'erreur exacte telle quelle.
+// failedAtStart : la vérification échouait au départ (sinon rien à réparer, pas de fin automatique).
+let CHECK = null;
+
 // Vérifications automatiques : l'IA part des ERREURS, elle ne lit pas tout le projet.
 function autoChecks() {
   const has = (f) => fs.existsSync(path.join(ROOT, f));
@@ -87,10 +92,12 @@ function autoChecks() {
     const cmd = scripts.test && !/no test specified/.test(scripts.test) ? "npm test" : scripts.build ? "npm run build" : null;
     if (!cmd) return "Aucun script de test ou de build.";
     const r = sh(`${cmd} 2>&1`, 240000);
+    CHECK = { label: cmd, command: `${cmd} 2>&1`, failedAtStart: r.code !== 0 };
     return `${cmd} -> code ${r.code}\n${tail(r.out)}`;
   }
   if (has("requirements.txt") || has("pyproject.toml")) {
     const r = sh("python3 -m pytest -x -q 2>&1", 240000);
+    CHECK = { label: "pytest", command: "python3 -m pytest -x -q 2>&1", failedAtStart: r.code !== 0 };
     return `pytest -> code ${r.code}\n${tail(r.out)}`;
   }
   return "Aucune vérification automatique détectée.";
@@ -134,13 +141,13 @@ const T = (name, description, properties, required) => ({ type: "function", func
 const toolDefs = [
   T("list_files", "Liste les fichiers suivis par git (200 max).", { dir: { type: "string" } }, []),
   T("read_file", "Lit un fichier, 120 lignes max par appel.", { path: { type: "string" }, start: { type: "integer" }, end: { type: "integer" } }, ["path"]),
-  T("write_file", "Écrase un fichier avec son contenu complet.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"]),
-  T("run", "Exécute une commande shell dans le projet (120 s max) : tests, build, vercel, wrangler, fly, curl.", { command: { type: "string" } }, ["command"]),
+  T("write_file", "Écrase un fichier avec son contenu complet. Le terminal relance ensuite la vérification tout seul et te donne le résultat.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"]),
+  T("run", "Exécute une commande shell dans le projet (120 s max) : vercel, wrangler, fly, curl, ou toute autre commande utile. Inutile pour relancer le test ou le build : le terminal le fait seul.", { command: { type: "string" } }, ["command"]),
   T("note", "Écrit une courte ligne visible par l'utilisateur dans le suivi (ex. « Erreur 1 corrigée : ... », « Je passe à l'erreur 2 »).", { text: { type: "string" } }, ["text"]),
   T("finish", "Termine la tâche avec un court résumé en deux parties : Corrigé et Reste à faire.", { summary: { type: "string" } }, ["summary"]),
 ];
 
-const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification, puis revérifie avec run avant de passer à la suivante, et note chaque erreur réglée avec l'outil note. Continue jusqu'à ce que toutes les vérifications passent. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que quand tout passe, ou quand plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
+const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Après chaque fichier écrit, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
 
 // Les anciennes sorties d'outils sont raccourcies pour économiser les tokens.
 const compact = (m) => m.map((x, i) => (x.role === "tool" && i < m.length - 6 && x.content.length > 300 ? { ...x, content: x.content.slice(0, 300) + " [...]" } : x));
@@ -163,6 +170,8 @@ async function llm(body) {
 
 async function agent(first) {
   const messages = [{ role: "system", content: SYSTEM }, { role: "user", content: first }];
+  const notes = [];
+  let reruns = 0;
   for (let step = 0; step < 40; step++) {
     const data = await llm({ messages: compact(messages), tools: toolDefs, tool_choice: "auto" });
     const msg = data.choices?.[0]?.message;
@@ -171,12 +180,15 @@ async function agent(first) {
     const calls = msg.tool_calls || [];
     if (!calls.length) return msg.content || "Terminé.";
     let summary = null;
+    let dirty = false;
     for (const c of calls) {
       let out;
       try {
         const args = JSON.parse(c.function.arguments || "{}");
         if (c.function.name === "note") {
-          progress(String(args.text || ""));
+          const text = String(args.text || "");
+          notes.push(text.slice(0, 120));
+          progress(text);
           out = "ok";
         } else {
           progress(`${c.function.name} ${args.path || args.command || args.dir || ""}`.trim());
@@ -185,6 +197,7 @@ async function agent(first) {
             out = "ok";
           } else if (tools[c.function.name]) {
             out = tools[c.function.name](args);
+            if (c.function.name === "write_file") dirty = true;
           } else {
             out = "outil inconnu";
           }
@@ -195,6 +208,22 @@ async function agent(first) {
       messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: trunc(scrub(out)) });
     }
     if (summary !== null) return summary;
+
+    // Le terminal relance lui-même la vérification après chaque fichier écrit (8 fois au plus).
+    if (dirty && CHECK && reruns < 8) {
+      reruns++;
+      progress(`Vérification relancée (${CHECK.label})`);
+      const r = sh(CHECK.command, 240000);
+      progress(r.code === 0 ? "Vérification réussie" : `Vérification en erreur (code ${r.code})`);
+      if (r.code === 0 && CHECK.failedAtStart) {
+        const done = notes.length ? notes.join(" ; ") : "les erreurs de départ";
+        return `Corrigé : ${done}. Reste à faire : rien (${CHECK.label} passe maintenant).`;
+      }
+      messages.push({
+        role: "user",
+        content: `Vérification automatique relancée par le terminal : ${CHECK.label} -> code ${r.code}\n${tail(scrub(r.out))}\n${r.code === 0 ? "La vérification passe. Termine la tâche demandée puis appelle finish." : "Corrige l'erreur suivante, une seule à la fois."}`,
+      });
+    }
   }
   throw new Error("nombre maximum d'étapes atteint");
 }
@@ -229,7 +258,7 @@ try {
   const checks = job.newRepo ? "Projet vide, rien à vérifier." : autoChecks();
   progress("Vérifications terminées, l'IA analyse les erreurs");
   const files = git(["ls-files"]).split("\n").filter(Boolean);
-  const first = `Dépôt : ${repo}\nTâche : ${job.instructions}\n\nFichiers (${files.length}) :\n${files.slice(0, 60).join("\n")}\n\nVérifications automatiques :\n${checks}\n\nRappel : corrige les erreurs une à la fois, revérifie après chaque correction, continue jusqu'à ce que tout passe, puis fais le résumé Corrigé / Reste à faire.`;
+  const first = `Dépôt : ${repo}\nTâche : ${job.instructions}\n\nFichiers (${files.length}) :\n${files.slice(0, 60).join("\n")}\n\nVérifications automatiques :\n${checks}\n\nRappel : corrige les erreurs une à la fois ; le terminal relance seul la vérification après chaque fichier écrit ; continue jusqu'à ce que tout passe.`;
 
   const summary = await agent(first);
 
