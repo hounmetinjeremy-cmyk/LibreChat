@@ -84,6 +84,10 @@ CREATE TABLE IF NOT EXISTS usage (
   PRIMARY KEY (user_id, day)
 );
 `);
+// Journal d'activité de la tâche (ajouté après coup : ignoré si la colonne existe déjà).
+try {
+  db.exec("ALTER TABLE jobs ADD COLUMN activity TEXT");
+} catch {}
 
 const today = () => new Date().toISOString().slice(0, 10);
 const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
@@ -305,7 +309,7 @@ const ok = (t) => ({ content: [{ type: "text", text: t }] });
 const ko = (t) => ({ content: [{ type: "text", text: t }], isError: true });
 
 function buildServer(userId, ghHeader, svcHeaders) {
-  const s = new McpServer({ name: "fly-sandboxes", version: "2.2.0" });
+  const s = new McpServer({ name: "fly-sandboxes", version: "2.3.0" });
 
   s.tool(
     "find_repos",
@@ -332,7 +336,7 @@ function buildServer(userId, ghHeader, svcHeaders) {
 
   s.tool(
     "run_task",
-    "Exécute une tâche de développement ou de déploiement dans un conteneur Linux isolé et jetable : clone d'un dépôt GitHub (ou création d'un nouveau projet), vérifications automatiques, correction par l'IA, commandes (Vercel, Cloudflare, Render, Fly...), push et pull request. Appeler UNE seule fois ; retourne un job_id tout de suite. Ne pas lire les fichiers soi-même. Le nom du dépôt doit être exact : s'il ne l'est pas, appeler find_repos d'abord. Clés de services : si la tâche demande Vercel, Cloudflare, Render ou Fly.io, demande à l'utilisateur de générer sa clé (token) sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre correspondant. Ne demande que les clés dont la tâche a besoin.",
+    "Exécute une tâche de développement ou de déploiement dans un conteneur Linux isolé et jetable : clone d'un dépôt GitHub (ou création d'un nouveau projet), vérifications automatiques, correction de la première erreur par l'IA, commandes (Vercel, Cloudflare, Render, Fly...), push et pull request. Appeler UNE seule fois ; retourne un job_id tout de suite, puis suivre avec get_job. Ne pas lire les fichiers soi-même. Le nom du dépôt doit être exact : s'il ne l'est pas, appeler find_repos d'abord. Clés de services : si la tâche demande Vercel, Cloudflare, Render ou Fly.io, demande à l'utilisateur de générer sa clé (token) sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre correspondant. Ne demande que les clés dont la tâche a besoin.",
     {
       repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional().describe("Dépôt existant : proprietaire/nom"),
       new_repo_name: z.string().regex(/^[\w.-]{1,100}$/).optional().describe("Nom d'un NOUVEAU dépôt privé à créer (au lieu de repo)"),
@@ -363,13 +367,13 @@ function buildServer(userId, ghHeader, svcHeaders) {
         db.prepare("UPDATE usage SET jobs=MAX(jobs-1,0) WHERE user_id=? AND day=?").run(userId, today());
         return ko("Impossible de démarrer le conteneur pour le moment.");
       }
-      return ok(`Tâche ${r.id} lancée. Le conteneur se détruit seul à la fin. Dire à l'utilisateur de demander le statut plus tard (get_job, job_id=${r.id}).`);
+      return ok(`Tâche ${r.id} lancée. Le conteneur se détruit seul à la fin. Ensuite : écris à l'utilisateur une phrase courte du genre « Travail en cours, patiente un peu, je te fais le retour dès que c'est fini. », puis appelle get_job (job_id=${r.id}, wait_seconds=45) et recommence tant que le statut est running. Quand il est success ou failed, donne le résultat.`);
     }
   );
 
   s.tool(
     "get_job",
-    "Statut d'une tâche (running, success, failed), résumé, branche, lien de la pull request et tokens consommés.",
+    "Statut d'une tâche (running, success, failed), résumé (Corrigé / Reste à faire), branche, lien de la pull request, tokens consommés et activité récente (activite : les dernières actions du conteneur). Avec wait_seconds (45 au plus), attend la fin de la tâche avant de répondre.",
     {
       job_id: z.string().regex(/^[a-f0-9]{12}$/),
       wait_seconds: z.number().int().min(0).max(45).optional(),
@@ -383,7 +387,11 @@ function buildServer(userId, ghHeader, svcHeaders) {
         if (!(j.status === "queued" || j.status === "running") || Date.now() >= deadline) break;
         await new Promise((r) => setTimeout(r, 2000));
       }
-      return ok(JSON.stringify({ job_id: j.id, repo: j.repo, status: j.status, summary: j.summary, branch: j.branch, pull_request: j.pr_url, tokens_used: j.tokens_used }));
+      const running = j.status === "queued" || j.status === "running";
+      const activite = String(j.activity || "").split("\n").filter(Boolean).slice(-8);
+      const out = { job_id: j.id, repo: j.repo, status: j.status, summary: j.summary, branch: j.branch, pull_request: j.pr_url, tokens_used: j.tokens_used, activite };
+      if (running) out.consigne = "Toujours en cours : dis en une phrase où ça en est d'après activite, puis rappelle get_job avec wait_seconds=45.";
+      return ok(JSON.stringify(out));
     }
   );
 
@@ -438,6 +446,18 @@ app.get("/internal/job", (req, res) => {
   if (!c || c.exp < Date.now()) return res.status(410).json({ error: "identifiants expirés" });
   creds.delete(job.id);
   res.json({ id: job.id, repo: c.repo, newRepo: c.newRepo, base: c.base, instructions: c.instructions, ghToken: c.ghToken, svc: c.svc });
+});
+
+// Journal d'activité : une ligne courte par action du conteneur, lue ensuite par get_job.
+app.post("/internal/progress", express.json({ limit: "16kb" }), (req, res) => {
+  const job = jobFromReq(req);
+  if (!job) return res.status(401).json({ error: "jeton invalide" });
+  const line = String(req.body?.line || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  if (line && (job.status === "queued" || job.status === "running")) {
+    const next = (job.activity ? `${job.activity}\n` : "") + line;
+    db.prepare("UPDATE jobs SET activity=? WHERE id=?").run(next.slice(-3000), job.id);
+  }
+  res.json({ ok: true });
 });
 
 app.post("/internal/llm/chat/completions", express.json({ limit: "4mb" }), async (req, res) => {

@@ -23,9 +23,15 @@ async function api(p, opts = {}) {
     signal: AbortSignal.timeout(150000),
   });
   const t = await r.text();
-  if (!r.ok) throw new Error(`${p} ${r.status} ${t.slice(0, 200)}`);
+  if (!r.ok) throw new Error(`${p} ${r.status} ${t.slice(0, 400)}`);
   return JSON.parse(t);
 }
+
+// Journal d'activité : chaque action est envoyée à l'orchestrateur, que get_job montre à l'utilisateur.
+// Sans conséquence si l'envoi échoue.
+const progress = (line) => {
+  api("/internal/progress", { method: "POST", body: JSON.stringify({ line: scrub(line).slice(0, 200) }) }).catch(() => {});
+};
 
 async function report(body) {
   if (reported) return;
@@ -129,18 +135,34 @@ const toolDefs = [
   T("read_file", "Lit un fichier, 120 lignes max par appel.", { path: { type: "string" }, start: { type: "integer" }, end: { type: "integer" } }, ["path"]),
   T("write_file", "Écrase un fichier avec son contenu complet.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"]),
   T("run", "Exécute une commande shell dans le projet (120 s max) : tests, build, vercel, wrangler, fly, curl.", { command: { type: "string" } }, ["command"]),
-  T("finish", "Termine la tâche avec un court résumé.", { summary: { type: "string" } }, ["summary"]),
+  T("finish", "Termine la tâche avec un court résumé en deux parties : Corrigé et Reste à faire.", { summary: { type: "string" } }, ["summary"]),
 ];
 
-const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. Fais le plus petit changement correct, revérifie avec run, puis appelle finish. Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
+const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige UNIQUEMENT la première (la plus en amont), sans toucher aux autres : fais le plus petit changement correct, revérifie avec run, puis appelle finish avec un résumé en deux parties : « Corrigé : ... » et « Reste à faire : ... » (liste courte des erreurs restantes, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
 
 // Les anciennes sorties d'outils sont raccourcies pour économiser les tokens.
 const compact = (m) => m.map((x, i) => (x.role === "tool" && i < m.length - 6 && x.content.length > 300 ? { ...x, content: x.content.slice(0, 300) + " [...]" } : x));
 
+// Appel de l'IA. Limite temporaire du fournisseur (429, 503) : nouvelles tentatives après une courte attente.
+// Le budget de tokens de la tâche ou du jour (message « budget ») n'est pas réessayé.
+async function llm(body) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await api("/internal/llm/chat/completions", { method: "POST", body: JSON.stringify(body) });
+    } catch (err) {
+      const m = / (429|503) /.exec(err.message);
+      if (!m || /budget/.test(err.message) || attempt >= 4) throw err;
+      const wait = 15 * (attempt + 1);
+      progress(`Limite de l'IA atteinte (${m[1]}), nouvelle tentative dans ${wait} s`);
+      await new Promise((r) => setTimeout(r, wait * 1000));
+    }
+  }
+}
+
 async function agent(first) {
   const messages = [{ role: "system", content: SYSTEM }, { role: "user", content: first }];
   for (let step = 0; step < 25; step++) {
-    const data = await api("/internal/llm/chat/completions", { method: "POST", body: JSON.stringify({ messages: compact(messages), tools: toolDefs, tool_choice: "auto" }) });
+    const data = await llm({ messages: compact(messages), tools: toolDefs, tool_choice: "auto" });
     const msg = data.choices?.[0]?.message;
     if (!msg) throw new Error("réponse LLM vide");
     messages.push(msg);
@@ -151,6 +173,7 @@ async function agent(first) {
       let out;
       try {
         const args = JSON.parse(c.function.arguments || "{}");
+        progress(`${c.function.name} ${args.path || args.command || args.dir || ""}`.trim());
         if (c.function.name === "finish") {
           summary = args.summary || "Terminé.";
           out = "ok";
@@ -189,20 +212,24 @@ try {
     base = base || (await metaRes.json()).default_branch;
   }
 
+  progress(`Clonage de ${repo}`);
   fs.mkdirSync("/work", { recursive: true });
   git(["clone", "--depth", "50", "--branch", base, `https://github.com/${repo}.git`, ROOT], "/work");
   const branch = job.newRepo ? null : `ai-fix/${job.id}`;
   if (branch) git(["checkout", "-b", branch]);
 
+  if (!job.newRepo) progress("Vérifications automatiques en cours (installation, test ou build)");
   const checks = job.newRepo ? "Projet vide, rien à vérifier." : autoChecks();
+  progress("Vérifications terminées, l'IA analyse la première erreur");
   const files = git(["ls-files"]).split("\n").filter(Boolean);
-  const first = `Dépôt : ${repo}\nTâche : ${job.instructions}\n\nFichiers (${files.length}) :\n${files.slice(0, 60).join("\n")}\n\nVérifications automatiques :\n${checks}`;
+  const first = `Dépôt : ${repo}\nTâche : ${job.instructions}\n\nFichiers (${files.length}) :\n${files.slice(0, 60).join("\n")}\n\nVérifications automatiques :\n${checks}\n\nRappel : corrige seulement la première erreur, puis fais le résumé Corrigé / Reste à faire.`;
 
   const summary = await agent(first);
 
   if (!git(["status", "--porcelain"]).trim()) {
     await report({ status: "success", summary: `Aucun changement de code. ${summary}` });
   } else {
+    progress("Envoi des corrections sur GitHub");
     git(["add", "-A"]);
     git(["commit", "-m", `${job.newRepo ? "feat" : "fix"}: ${job.instructions.split("\n")[0].slice(0, 60)} (automatique)`]);
     if (job.newRepo) {

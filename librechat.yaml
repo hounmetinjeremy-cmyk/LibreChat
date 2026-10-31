@@ -11,11 +11,11 @@ interface:
 endpoints:
   # Limite d'étapes par message. Une étape = un passage du modèle OU des outils.
   # Sans outil : 1 étape. Un tour d'outil = 3 étapes (modèle, outil, modèle qui lit le résultat).
-  # 5 = deux tours d'outils maximum puis la réponse finale (3 appels du modèle au plus).
-  # Avec 2, l'agent appelait un outil puis n'avait plus d'étape pour répondre.
+  # 12 = permet de lancer une tâche puis d'attendre sa fin avec plusieurs appels get_job (45 s chacun),
+  # pour que l'IA fasse le retour d'elle-même à la fin du travail.
   agents:
-    recursionLimit: 5
-    maxRecursionLimit: 5
+    recursionLimit: 12
+    maxRecursionLimit: 12
 
   custom:
     # Les utilisateurs ne voient que « Aube » et « Soleil ».
@@ -132,6 +132,8 @@ mcpServers:
   # générer sa clé et de l'envoyer dans le chat, puis la passe à run_task (paramètres facultatifs).
   # Outils : find_repos (cherche les dépôts de l'utilisateur), run_task, get_job, my_quota.
   # L'identité vient de LibreChat (non falsifiable) ; quotas de tâches et de tokens par utilisateur.
+  # Suivi : après run_task, l'IA écrit « Travail en cours, patiente » puis appelle get_job (45 s d'attente
+  # chacun, moins que le délai de 60 s ci-dessous) jusqu'à la fin, puis donne le résultat.
   # Secret Fly : ORCHESTRATOR_SECRET.
   sandbox:
     type: streamable-http
@@ -141,4 +143,4 @@ mcpServers:
       Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
       X-User-Id: "{{LIBRECHAT_USER_ID}}"
     timeout: 60000
-    serverInstructions: "Pour toute tâche de code, de projet ou de déploiement : si l'utilisateur ne donne pas le nom exact du dépôt (proprietaire/nom), appelle d'abord find_repos avec les mots qu'il a écrits, puis propose-lui les dépôts trouvés en une phrase courte (« Tu parles de X ? ») et attends son oui avant d'appeler run_task. S'il donne le nom exact, appelle run_task directement. Appelle run_task une seule fois, puis dis à l'utilisateur de redemander le statut plus tard (get_job). Ne boucle jamais. Si un outil répond que GitHub n'est pas connecté, propose les deux choix indiqués par l'outil (lien de connexion tel quel, ou token GitHub envoyé dans le chat). Si la tâche demande Vercel, Cloudflare, Render ou Fly.io, dis à l'utilisateur de générer sa clé sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre de run_task correspondant. Ne demande jamais une clé dont la tâche n'a pas besoin."
+    serverInstructions: "Pour toute tâche de code, de projet ou de déploiement : si l'utilisateur ne donne pas le nom exact du dépôt (proprietaire/nom), appelle d'abord find_repos avec les mots qu'il a écrits, puis propose-lui les dépôts trouvés en une phrase courte (« Tu parles de X ? ») et attends son oui avant d'appeler run_task. S'il donne le nom exact, appelle run_task directement. Appelle run_task une seule fois (jamais deux fois pour la même demande). Dès qu'il rend un job_id, écris à l'utilisateur une phrase courte : « Travail en cours, patiente un peu, je te fais le retour dès que c'est fini. », puis appelle get_job avec wait_seconds=45 et recommence tant que le statut est running ; tu peux dire en une phrase où ça en est d'après le champ activite. Quand le statut est success ou failed, donne le résultat : ce qui est corrigé, ce qui reste à faire, le lien de la pull request, ou la raison de l'échec telle qu'elle est dans summary. Si c'est toujours en cours après plusieurs essais, dis à l'utilisateur de te redemander le statut. Si un outil répond que GitHub n'est pas connecté, propose les deux choix indiqués par l'outil (lien de connexion tel quel, ou token GitHub envoyé dans le chat). Si la tâche demande Vercel, Cloudflare, Render ou Fly.io, dis à l'utilisateur de générer sa clé sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre de run_task correspondant. Ne demande jamais une clé dont la tâche n'a pas besoin."
