@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useRef } from 'react';
 import { Square } from 'lucide-react';
+import { useWatch } from 'react-hook-form';
 import { useRecoilValue } from 'recoil';
 import {
   IconButton,
@@ -31,7 +32,7 @@ export default memo(function AudioRecorder({
   methods: ReturnType<typeof useChatFormContext>;
   isSubmitting: boolean;
 }) {
-  const { setValue, reset, getValues, watch } = methods;
+  const { setValue, reset, getValues, control } = methods;
   const localize = useLocalize();
   const { showToast } = useToastContext();
   const { speechToTextEndpoint } = useGetAudioSettings();
@@ -110,7 +111,7 @@ export default memo(function AudioRecorder({
    * Quand le message est envoyé, le champ de saisie est vidé : on efface alors la dictée
    * mémorisée par le micro, sinon le texte déjà envoyé revient dans le champ.
    */
-  const currentText = watch('text');
+  const currentText = useWatch({ control, name: 'text' });
   const previousTextRef = useRef<string>('');
   useEffect(() => {
     const previousText = previousTextRef.current;
