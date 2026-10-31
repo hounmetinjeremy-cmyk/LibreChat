@@ -26,6 +26,11 @@ const SpeechRecognition = hasSpeechRecognitionController(speechRecognitionModule
   ? speechRecognitionModule
   : speechRecognitionModule.default;
 
+/** Relance automatique : délai avant de relancer, et limite anti-boucle (4 relances en 5 s). */
+const RESTART_DELAY_MS = 300;
+const RESTART_WINDOW_MS = 5000;
+const RESTART_MAX_IN_WINDOW = 4;
+
 const useSpeechToTextBrowser = (
   setText: (text: string) => void,
   onTranscriptionComplete: (text: string) => void,
@@ -38,6 +43,9 @@ const useSpeechToTextBrowser = (
   const lastTranscript = useRef<string | null>(null);
   const lastInterim = useRef<string | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>();
+  /** Vrai tant que la personne n'a pas appuyé sur le carré : le micro doit rester allumé. */
+  const wantsListeningRef = useRef(false);
+  const restartTimesRef = useRef<number[]>([]);
   const [autoSendText] = useRecoilState(store.autoSendText);
   const [languageSTT] = useRecoilState<string>(store.languageSTT);
   const [autoTranscribeAudio] = useRecoilState<boolean>(store.autoTranscribeAudio);
@@ -90,8 +98,54 @@ const useSpeechToTextBrowser = (
     };
   }, [setText, onTranscriptionComplete, resetTranscript, finalTranscript, autoSendText]);
 
+  /**
+   * Chrome coupe parfois l'écoute tout seul (silence, changement d'application, réseau).
+   * Si la personne n'a pas appuyé sur le carré, on relance le micro sans effacer le texte.
+   * Sécurité : au plus 4 relances en 5 secondes, sinon on abandonne (pas de boucle infinie).
+   */
+  useEffect(() => {
+    if (isListening === true || !wantsListeningRef.current) {
+      return;
+    }
+    if (!autoTranscribeAudio || !isMicrophoneAvailable) {
+      wantsListeningRef.current = false;
+      return;
+    }
+    if (!hasSpeechRecognitionController(SpeechRecognition)) {
+      return;
+    }
+
+    const now = Date.now();
+    restartTimesRef.current = restartTimesRef.current.filter((t) => now - t < RESTART_WINDOW_MS);
+    if (restartTimesRef.current.length >= RESTART_MAX_IN_WINDOW) {
+      wantsListeningRef.current = false;
+      return;
+    }
+    restartTimesRef.current.push(now);
+
+    const restartTimer = setTimeout(() => {
+      if (wantsListeningRef.current && hasSpeechRecognitionController(SpeechRecognition)) {
+        SpeechRecognition.startListening({
+          language: languageSTT,
+          continuous: autoTranscribeAudio,
+        });
+      }
+    }, RESTART_DELAY_MS);
+
+    return () => clearTimeout(restartTimer);
+  }, [autoTranscribeAudio, isListening, isMicrophoneAvailable, languageSTT]);
+
+  /** Si le composant disparaît, le micro ne doit plus se relancer. */
+  useEffect(
+    () => () => {
+      wantsListeningRef.current = false;
+    },
+    [],
+  );
+
   /** Oublie tout ce qui a été dicté (sinon le texte déjà envoyé revient dans le champ de saisie). */
   const clearTranscript = useCallback(() => {
+    wantsListeningRef.current = false;
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
     }
@@ -137,12 +191,15 @@ const useSpeechToTextBrowser = (
     }
 
     if (isListening === true) {
+      wantsListeningRef.current = false;
       SpeechRecognition.stopListening();
     } else {
       /** Nouvelle dictée : on repart de zéro pour ne pas réinjecter l'ancien texte. */
       resetTranscript();
       lastTranscript.current = null;
       lastInterim.current = null;
+      restartTimesRef.current = [];
+      wantsListeningRef.current = true;
       SpeechRecognition.startListening({
         language: languageSTT,
         continuous: autoTranscribeAudio,
