@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef } from 'react';
-import { MicOff } from 'lucide-react';
+import { Square } from 'lucide-react';
 import { useRecoilValue } from 'recoil';
 import {
   IconButton,
@@ -14,6 +14,12 @@ import { useChatFormContext } from '~/Providers';
 import store from '~/store';
 
 const isExternalSTT = (speechToTextEndpoint: string) => speechToTextEndpoint === 'external';
+
+/** Animation des ondes : barres qui montent et descendent pendant l'écoute. */
+const WAVE_KEYFRAMES =
+  '@keyframes audio-wave{0%,100%{transform:scaleY(.25)}50%{transform:scaleY(1)}}';
+const WAVE_DELAYS = [0, 0.15, 0.3, 0.1, 0.25, 0.05, 0.2];
+
 export default memo(function AudioRecorder({
   disabled,
   ask,
@@ -123,7 +129,24 @@ export default memo(function AudioRecorder({
 
   const renderIcon = () => {
     if (isListening === true) {
-      return <MicOff className="stroke-status-error" />;
+      /** Pendant l'écoute : ondes animées + bouton carré d'arrêt (comme dans l'app Claude) */
+      return (
+        <span className="flex items-center gap-2 px-1">
+          <style>{WAVE_KEYFRAMES}</style>
+          <span className="flex h-5 items-center gap-[3px]" aria-hidden="true">
+            {WAVE_DELAYS.map((delay, index) => (
+              <span
+                key={index}
+                className="h-5 w-[3px] rounded-full bg-text-primary"
+                style={{ animation: `audio-wave 0.9s ease-in-out ${delay}s infinite` }}
+              />
+            ))}
+          </span>
+          <span className="flex size-7 items-center justify-center rounded-full bg-surface-tertiary">
+            <Square className="size-3 fill-current stroke-current text-text-primary" />
+          </span>
+        </span>
+      );
     }
     if (isLoading === true) {
       return <Spinner className="stroke-text-secondary" />;
