@@ -31,7 +31,7 @@ export default memo(function AudioRecorder({
   methods: ReturnType<typeof useChatFormContext>;
   isSubmitting: boolean;
 }) {
-  const { setValue, reset, getValues } = methods;
+  const { setValue, reset, getValues, watch } = methods;
   const localize = useLocalize();
   const { showToast } = useToastContext();
   const { speechToTextEndpoint } = useGetAudioSettings();
@@ -90,10 +90,8 @@ export default memo(function AudioRecorder({
     [setValue, speechToTextEndpoint],
   );
 
-  const { isListening, isLoading, startRecording, stopRecording } = useSpeechToText(
-    setText,
-    onTranscriptionComplete,
-  );
+  const { isListening, isLoading, startRecording, stopRecording, clearTranscript } =
+    useSpeechToText(setText, onTranscriptionComplete);
 
   const handleStartRecording = useCallback(() => {
     existingTextRef.current = getValues('text') || '';
@@ -107,6 +105,26 @@ export default memo(function AudioRecorder({
       existingTextRef.current = '';
     }
   }, [speechToTextEndpoint, stopRecording]);
+
+  /**
+   * Quand le message est envoyé, le champ de saisie est vidé : on efface alors la dictée
+   * mémorisée par le micro, sinon le texte déjà envoyé revient dans le champ.
+   */
+  const currentText = watch('text');
+  const previousTextRef = useRef<string>('');
+  useEffect(() => {
+    const previousText = previousTextRef.current;
+    previousTextRef.current = currentText || '';
+    if (
+      isListening === true &&
+      !isExternalSTT(speechToTextEndpoint) &&
+      previousText !== '' &&
+      !currentText
+    ) {
+      clearTranscript();
+      existingTextRef.current = '';
+    }
+  }, [clearTranscript, currentText, isListening, speechToTextEndpoint]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
