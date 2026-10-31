@@ -125,6 +125,7 @@ const tools = {
   },
   run({ command }) {
     const r = sh(command);
+    progress(`commande terminée (code ${r.code})`);
     return trunc(`code ${r.code}\n${r.out}`);
   },
 };
@@ -135,10 +136,11 @@ const toolDefs = [
   T("read_file", "Lit un fichier, 120 lignes max par appel.", { path: { type: "string" }, start: { type: "integer" }, end: { type: "integer" } }, ["path"]),
   T("write_file", "Écrase un fichier avec son contenu complet.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"]),
   T("run", "Exécute une commande shell dans le projet (120 s max) : tests, build, vercel, wrangler, fly, curl.", { command: { type: "string" } }, ["command"]),
+  T("note", "Écrit une courte ligne visible par l'utilisateur dans le suivi (ex. « Erreur 1 corrigée : ... », « Je passe à l'erreur 2 »).", { text: { type: "string" } }, ["text"]),
   T("finish", "Termine la tâche avec un court résumé en deux parties : Corrigé et Reste à faire.", { summary: { type: "string" } }, ["summary"]),
 ];
 
-const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige UNIQUEMENT la première (la plus en amont), sans toucher aux autres : fais le plus petit changement correct, revérifie avec run, puis appelle finish avec un résumé en deux parties : « Corrigé : ... » et « Reste à faire : ... » (liste courte des erreurs restantes, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
+const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification, puis revérifie avec run avant de passer à la suivante, et note chaque erreur réglée avec l'outil note. Continue jusqu'à ce que toutes les vérifications passent. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que quand tout passe, ou quand plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
 
 // Les anciennes sorties d'outils sont raccourcies pour économiser les tokens.
 const compact = (m) => m.map((x, i) => (x.role === "tool" && i < m.length - 6 && x.content.length > 300 ? { ...x, content: x.content.slice(0, 300) + " [...]" } : x));
@@ -161,7 +163,7 @@ async function llm(body) {
 
 async function agent(first) {
   const messages = [{ role: "system", content: SYSTEM }, { role: "user", content: first }];
-  for (let step = 0; step < 25; step++) {
+  for (let step = 0; step < 40; step++) {
     const data = await llm({ messages: compact(messages), tools: toolDefs, tool_choice: "auto" });
     const msg = data.choices?.[0]?.message;
     if (!msg) throw new Error("réponse LLM vide");
@@ -173,14 +175,19 @@ async function agent(first) {
       let out;
       try {
         const args = JSON.parse(c.function.arguments || "{}");
-        progress(`${c.function.name} ${args.path || args.command || args.dir || ""}`.trim());
-        if (c.function.name === "finish") {
-          summary = args.summary || "Terminé.";
+        if (c.function.name === "note") {
+          progress(String(args.text || ""));
           out = "ok";
-        } else if (tools[c.function.name]) {
-          out = tools[c.function.name](args);
         } else {
-          out = "outil inconnu";
+          progress(`${c.function.name} ${args.path || args.command || args.dir || ""}`.trim());
+          if (c.function.name === "finish") {
+            summary = args.summary || "Terminé.";
+            out = "ok";
+          } else if (tools[c.function.name]) {
+            out = tools[c.function.name](args);
+          } else {
+            out = "outil inconnu";
+          }
         }
       } catch (err) {
         out = "Erreur : " + err.message;
@@ -220,9 +227,9 @@ try {
 
   if (!job.newRepo) progress("Vérifications automatiques en cours (installation, test ou build)");
   const checks = job.newRepo ? "Projet vide, rien à vérifier." : autoChecks();
-  progress("Vérifications terminées, l'IA analyse la première erreur");
+  progress("Vérifications terminées, l'IA analyse les erreurs");
   const files = git(["ls-files"]).split("\n").filter(Boolean);
-  const first = `Dépôt : ${repo}\nTâche : ${job.instructions}\n\nFichiers (${files.length}) :\n${files.slice(0, 60).join("\n")}\n\nVérifications automatiques :\n${checks}\n\nRappel : corrige seulement la première erreur, puis fais le résumé Corrigé / Reste à faire.`;
+  const first = `Dépôt : ${repo}\nTâche : ${job.instructions}\n\nFichiers (${files.length}) :\n${files.slice(0, 60).join("\n")}\n\nVérifications automatiques :\n${checks}\n\nRappel : corrige les erreurs une à la fois, revérifie après chaque correction, continue jusqu'à ce que tout passe, puis fais le résumé Corrigé / Reste à faire.`;
 
   const summary = await agent(first);
 
