@@ -1,6 +1,6 @@
 # Orchestrateur : seul composant qui détient le jeton Fly (FLY_API_TOKEN) et les clés LLM.
 # Secrets à définir avec `fly secrets set` (jamais dans ce fichier, dépôt public) :
-#   FLY_API_TOKEN, ORCHESTRATOR_SECRET, LLM_API_KEY (clé OpenRouter)
+#   FLY_API_TOKEN, ORCHESTRATOR_SECRET, LLM_API_KEY (la clé du fournisseur choisi ci-dessous)
 app = 'jeremy-sbx-orch'
 primary_region = 'ams'
 
@@ -20,9 +20,18 @@ primary_region = 'ams'
   DAILY_JOBS_PER_USER = '5'
   TOKENS_PER_JOB = '150000'
   TOKENS_PER_USER_DAY = '400000'
-  # Modèle de l'agent du conteneur, via OpenRouter
-  LLM_BASE_URL = 'https://openrouter.ai/api/v1'
-  LLM_MODEL = 'deepseek/deepseek-v4-flash'
+
+  # ---- Modèle de l'agent du conteneur : garder UN SEUL des deux blocs actif.
+  # Pour changer : décommenter l'autre bloc, commenter celui-ci, puis remplacer le secret GitHub
+  # LLM_API_KEY par la clé du fournisseur et relancer le workflow « Déployer les sandboxes Fly.io ».
+
+  # Bloc 1 (actif) : Gemini direct (clé Google AI Studio)
+  LLM_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai'
+  LLM_MODEL = 'gemini-3-flash-preview'
+
+  # Bloc 2 : OpenRouter (clé « sk-or-v1-... »)
+  # LLM_BASE_URL = 'https://openrouter.ai/api/v1'
+  # LLM_MODEL = 'deepseek/deepseek-v4-flash'
 
 [http_service]
   internal_port = 8080
