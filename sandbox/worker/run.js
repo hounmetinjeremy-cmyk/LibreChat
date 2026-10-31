@@ -157,6 +157,17 @@ const tools = {
     fs.writeFileSync(full, content);
     return `écrit : ${p}`;
   },
+  // Recherche dans le code suivi par git (expression régulière) : trouve où quelque chose est défini ou utilisé
+  // sans lire des fichiers entiers.
+  search_code({ pattern, dir = "." }) {
+    if (typeof pattern !== "string" || !pattern) throw new Error("pattern est vide");
+    const base = path.relative(ROOT, safe(dir)) || ".";
+    const r = spawnSync("git", ["grep", "-n", "-I", "-E", "--max-count=5", "-e", pattern, "--", base], { cwd: ROOT, encoding: "utf8", timeout: 20000, maxBuffer: 2e6 });
+    if (r.status > 1) throw new Error(`recherche impossible : ${String(r.stderr || "").slice(0, 200)}`);
+    const lines = (r.stdout || "").split("\n").filter(Boolean);
+    if (!lines.length) return "aucun résultat";
+    return lines.slice(0, 40).map((l) => l.slice(0, 200)).join("\n") + (lines.length > 40 ? `\n... (${lines.length} résultats, affine ta recherche)` : "");
+  },
   // Retouche : remplace UN extrait exact par un autre. Bien moins de tokens que réécrire le fichier entier.
   edit_file({ path: p, old_str, new_str }) {
     const full = safe(p);
@@ -180,6 +191,7 @@ const T = (name, description, properties, required) => ({ type: "function", func
 const toolDefs = [
   T("list_files", "Liste les fichiers suivis par git (200 max).", { dir: { type: "string" } }, []),
   T("read_file", "Lit un fichier, 120 lignes max par appel.", { path: { type: "string" }, start: { type: "integer" }, end: { type: "integer" } }, ["path"]),
+  T("search_code", "Cherche une expression régulière dans les fichiers du projet (40 lignes max). À utiliser pour trouver où une fonction, une variable ou un message est défini ou utilisé, au lieu de lire des fichiers entiers.", { pattern: { type: "string" }, dir: { type: "string" } }, ["pattern"]),
   T("edit_file", "Modifie un fichier EXISTANT : remplace un court extrait exact (old_str, unique dans le fichier) par new_str. À utiliser pour toute correction. Le terminal relance ensuite la vérification tout seul et te donne le résultat.", { path: { type: "string" }, old_str: { type: "string" }, new_str: { type: "string" } }, ["path", "old_str", "new_str"]),
   T("write_file", "Crée un NOUVEAU fichier avec son contenu complet. Ne l'utilise pas pour modifier un fichier existant (utilise edit_file). Le terminal relance ensuite la vérification tout seul.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"]),
   T("run", "Exécute une commande shell dans le projet (120 s max) : vercel, wrangler, fly, curl, ou toute autre commande utile. Inutile pour relancer le test ou le build : le terminal le fait seul.", { command: { type: "string" } }, ["command"]),
@@ -187,7 +199,7 @@ const toolDefs = [
   T("finish", "Termine la tâche avec un court résumé en deux parties : Corrigé et Reste à faire.", { summary: { type: "string" } }, ["summary"]),
 ];
 
-const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Les extraits des fichiers cités par l'erreur te sont déjà donnés : ne les relis pas. Pour modifier un fichier existant, utilise edit_file (remplace un court extrait exact) ; write_file sert seulement à créer un nouveau fichier. Ne réécris jamais un fichier entier pour changer quelques lignes. Après chaque fichier modifié, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
+const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Les extraits des fichiers cités par l'erreur te sont déjà donnés : ne les relis pas. Pour trouver où quelque chose est défini ou utilisé, utilise search_code plutôt que de lire des fichiers entiers. Pour modifier un fichier existant, utilise edit_file (remplace un court extrait exact) ; write_file sert seulement à créer un nouveau fichier. Ne réécris jamais un fichier entier pour changer quelques lignes. Après chaque fichier modifié, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
 
 // Historique allégé : tout ce qui est plus ancien que les 6 derniers messages est réduit à quelques mots
 // (sorties d'outils, contenus des fichiers écrits, rapports de vérification). Les 2 premiers messages
@@ -207,15 +219,19 @@ const shrinkArgs = (c) => {
   } catch {}
   return { ...c, function: { ...c.function, arguments: stub } };
 };
-const compact = (m) =>
-  m.map((x, i) => {
-    if (i < 2 || i >= m.length - KEEP_FULL) return x;
+// La limite avance par paquets de 4 messages (pas d'un message à la fois) : entre deux paliers, le début de
+// l'historique reste identique d'une étape à l'autre, donc le cache du fournisseur (moins cher) peut servir.
+const compact = (m) => {
+  const keepFrom = Math.max(2, m.length - KEEP_FULL - ((m.length - KEEP_FULL) % 4));
+  return m.map((x, i) => {
+    if (i < 2 || i >= keepFrom) return x;
     const text = typeof x.content === "string" ? x.content : "";
     if (x.role === "tool" && text.length > 200) return { ...x, content: text.slice(0, 200) + " [...]" };
     if (x.role === "user" && text.length > 400) return { ...x, content: text.slice(0, 400) + " [...]" };
     if (x.role === "assistant" && Array.isArray(x.tool_calls)) return { ...x, tool_calls: x.tool_calls.map(shrinkArgs) };
     return x;
   });
+};
 
 // Appel de l'IA. Limite temporaire du fournisseur (429, 503) : nouvelles tentatives après une courte attente.
 // Le budget de tokens de la tâche ou du jour (message « budget ») n'est pas réessayé.
@@ -237,6 +253,9 @@ async function agent(first) {
   const messages = [{ role: "system", content: SYSTEM }, { role: "user", content: first }];
   const notes = [];
   let reruns = 0;
+  // Garde-fou : même erreur après plusieurs corrections = l'IA tourne en rond (et brûle des tokens).
+  let lastSig = "";
+  let same = 0;
   for (let step = 0; step < 40; step++) {
     const data = await llm({ messages: compact(messages), tools: toolDefs, tool_choice: "auto" });
     const msg = data.choices?.[0]?.message;
@@ -256,7 +275,7 @@ async function agent(first) {
           progress(text);
           out = "ok";
         } else {
-          progress(`${c.function.name} ${args.path || args.command || args.dir || ""}`.trim());
+          progress(`${c.function.name} ${args.path || args.command || args.pattern || args.dir || ""}`.trim());
           if (c.function.name === "finish") {
             summary = args.summary || "Terminé.";
             out = "ok";
@@ -284,9 +303,17 @@ async function agent(first) {
         const done = notes.length ? notes.join(" ; ") : "les erreurs de départ";
         return `Corrigé : ${done}. Reste à faire : rien (${CHECK.label} passe maintenant).`;
       }
+      const sig = r.code === 0 ? "" : tail(scrub(r.out), 600);
+      same = sig && sig === lastSig ? same + 1 : 0;
+      lastSig = sig;
+      if (same >= 4) {
+        const done = notes.length ? notes.join(" ; ") : "rien";
+        return `Corrigé : ${done}. Reste à faire : ${CHECK.label} échoue toujours avec la même erreur après ${same + 1} essais : ${sig.slice(-300)}`;
+      }
+      const hint = same >= 2 ? "\nATTENTION : l'erreur est identique après plusieurs corrections, tes modifications ne la changent pas. Relis le fichier autour de la ligne en erreur avec read_file, cherche la vraie cause avec search_code, et change d'approche." : "";
       messages.push({
         role: "user",
-        content: `Vérification automatique relancée par le terminal : ${CHECK.label} -> code ${r.code}\n${tail(scrub(r.out))}\n${r.code === 0 ? "La vérification passe. Termine la tâche demandée puis appelle finish." : "Corrige l'erreur suivante, une seule à la fois."}`,
+        content: `Vérification automatique relancée par le terminal : ${CHECK.label} -> code ${r.code}\n${tail(scrub(r.out))}\n${r.code === 0 ? "La vérification passe. Termine la tâche demandée puis appelle finish." : "Corrige l'erreur suivante, une seule à la fois."}${hint}`,
       });
     }
   }
