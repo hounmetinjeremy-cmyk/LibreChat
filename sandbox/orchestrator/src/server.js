@@ -35,6 +35,10 @@ const C = {
   jobsPerDay: Number(e.DAILY_JOBS_PER_USER || 5),
   tokensPerJob: Number(e.TOKENS_PER_JOB || 150000),
   tokensPerDay: Number(e.TOKENS_PER_USER_DAY || 400000),
+  // Attente maximale d'un appel get_job. Chaque rappel de get_job fait relire toute la conversation au modèle
+  // du chat : plus l'attente est longue, moins il y a de rappels (150 s = environ 6 appels pour 15 minutes,
+  // contre 20 avec 45 s). Doit rester inférieur au « timeout » du serveur sandbox dans librechat.yaml.
+  maxWait: Math.max(5, Math.min(Number(e.GET_JOB_MAX_WAIT || 150), 280)),
 };
 
 // Clés de services (en-tête -> variable d'environnement du conteneur).
@@ -143,7 +147,7 @@ const norm = (s) =>
   String(s || "")
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+    .replace(/[̀-ͯ]/g, "");
 const words = (s) => norm(s).split(/[^a-z0-9]+/).filter((w) => w.length >= 2);
 
 function lev(a, b) {
@@ -367,31 +371,43 @@ function buildServer(userId, ghHeader, svcHeaders) {
         db.prepare("UPDATE usage SET jobs=MAX(jobs-1,0) WHERE user_id=? AND day=?").run(userId, today());
         return ko("Impossible de démarrer le conteneur pour le moment.");
       }
-      return ok(`Tâche ${r.id} lancée. Le conteneur se détruit seul à la fin. Un panneau de suivi en direct s'affiche déjà sous ton message : n'écris pas les étapes. Écris seulement une phrase courte du genre « Travail en cours, patiente un peu, je te fais le retour dès que c'est fini. », puis appelle get_job (job_id=${r.id}, wait_seconds=45) en boucle, sans écrire de texte entre les appels, tant que le statut est running. Quand il est success ou failed, donne le résultat.`);
+      return ok(`Tâche ${r.id} lancée. Le conteneur se détruit seul à la fin. Un panneau de suivi en direct s'affiche déjà sous ton message : n'écris pas les étapes. Écris seulement une phrase courte du genre « Travail en cours, patiente un peu, je te fais le retour dès que c'est fini. », puis appelle get_job (job_id=${r.id}, wait_seconds=${C.maxWait}) en boucle, sans écrire de texte entre les appels, tant que le statut est running. Quand il est success ou failed, donne le résultat.`);
     }
   );
 
   s.tool(
     "get_job",
-    "Statut d'une tâche (running, success, failed), résumé (Corrigé / Reste à faire), branche, lien de la pull request, tokens consommés et activité récente (activite : les dernières actions du conteneur). Avec wait_seconds (45 au plus), attend la fin de la tâche avant de répondre.",
+    `Statut d'une tâche (running, success, failed), résumé (Corrigé / Reste à faire), branche, lien de la pull request et tokens consommés. Avec wait_seconds (${C.maxWait} au plus), attend la fin de la tâche avant de répondre. Tant que la tâche tourne, la réponse est volontairement minimale : les étapes sont dans le panneau en direct.`,
     {
       job_id: z.string().regex(/^[a-f0-9]{12}$/),
-      wait_seconds: z.number().int().min(0).max(45).optional(),
+      wait_seconds: z.number().int().min(0).max(C.maxWait).optional(),
     },
-    async ({ job_id, wait_seconds }) => {
+    async ({ job_id, wait_seconds }, extra) => {
       const deadline = Date.now() + (wait_seconds || 0) * 1000;
+      // Pendant une longue attente, un signal de vie toutes les 20 s garde la connexion ouverte
+      // (et remet à zéro le délai du client MCP s'il le gère). Sans effet si le client n'en demande pas.
+      const progressToken = extra?._meta?.progressToken;
+      let lastPing = Date.now();
+      let ticks = 0;
       let j;
       for (;;) {
         j = db.prepare("SELECT * FROM jobs WHERE id=? AND user_id=?").get(job_id, userId);
         if (!j) return ko("Tâche introuvable.");
         if (!(j.status === "queued" || j.status === "running") || Date.now() >= deadline) break;
+        if (progressToken !== undefined && extra?.sendNotification && Date.now() - lastPing >= 20000) {
+          lastPing = Date.now();
+          try {
+            await extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress: ++ticks, message: "tâche en cours" } });
+          } catch {}
+        }
         await new Promise((r) => setTimeout(r, 2000));
       }
       const running = j.status === "queued" || j.status === "running";
-      const activite = String(j.activity || "").split("\n").filter(Boolean).slice(-8);
-      const out = { job_id: j.id, repo: j.repo, status: j.status, summary: j.summary, branch: j.branch, pull_request: j.pr_url, tokens_used: j.tokens_used, activite };
-      if (running) out.consigne = "Toujours en cours : n'écris rien, rappelle get_job avec wait_seconds=45. Le panneau en direct montre déjà les étapes.";
-      return ok(JSON.stringify(out));
+      // Tâche en cours : réponse minimale (peu de tokens à relire à chaque rappel).
+      if (running) {
+        return ok(JSON.stringify({ job_id: j.id, status: j.status, consigne: `Toujours en cours : n'écris rien, rappelle get_job avec wait_seconds=${C.maxWait}. Le panneau en direct montre déjà les étapes.` }));
+      }
+      return ok(JSON.stringify({ job_id: j.id, repo: j.repo, status: j.status, summary: j.summary, branch: j.branch, pull_request: j.pr_url, tokens_used: j.tokens_used }));
     }
   );
 
