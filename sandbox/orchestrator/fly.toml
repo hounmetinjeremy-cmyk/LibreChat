@@ -1,6 +1,6 @@
 # Orchestrateur : seul composant qui détient le jeton Fly (FLY_API_TOKEN) et les clés LLM.
 # Secrets à définir avec `fly secrets set` (jamais dans ce fichier, dépôt public) :
-#   FLY_API_TOKEN, ORCHESTRATOR_SECRET, LLM_API_KEY
+#   FLY_API_TOKEN, ORCHESTRATOR_SECRET, LLM_API_KEY (clé OpenRouter)
 app = 'jeremy-sbx-orch'
 primary_region = 'ams'
 
@@ -20,7 +20,9 @@ primary_region = 'ams'
   DAILY_JOBS_PER_USER = '5'
   TOKENS_PER_JOB = '150000'
   TOKENS_PER_USER_DAY = '400000'
-  LLM_MODEL = 'gemini-3-flash-preview'
+  # Modèle de l'agent du conteneur, via OpenRouter
+  LLM_BASE_URL = 'https://openrouter.ai/api/v1'
+  LLM_MODEL = 'deepseek/deepseek-v4-flash'
 
 [http_service]
   internal_port = 8080
