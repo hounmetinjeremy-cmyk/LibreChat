@@ -8,21 +8,15 @@ interface:
     create: true
     share: false
 
-# Dictée vocale précise : transcription Whisper (Groq, whisper-large-v3) à la place du micro du navigateur.
-# Le micro enregistre ; à l'arrêt, le texte est transcrit puis écrit dans la zone de saisie.
-# Clé : secret Fly STT_API_KEY (jamais écrite ici : dépôt public).
-# autoSendText: -1 = pas d'envoi automatique : tu appuies toi-même sur la flèche.
+# Dictée vocale : bouton micro dans la zone de saisie, le texte s'écrit en direct pendant que tu parles
+# (moteur du navigateur : HTTPS obligatoire, surtout Chrome).
+# autoSendText: -1 = pas d'envoi automatique : tu appuies toi-même sur la flèche quand tu as fini.
 speech:
-  stt:
-    openai:
-      url: "https://api.groq.com/openai/v1/audio/transcriptions"
-      apiKey: "${STT_API_KEY}"
-      model: "whisper-large-v3"
   speechTab:
     conversationMode: false
     advancedMode: false
     speechToText:
-      engineSTT: "external"
+      engineSTT: "browser"
       languageSTT: "French (France)"
       autoTranscribeAudio: true
       decibelValue: -45
