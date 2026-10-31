@@ -37,7 +37,9 @@ const C = {
   tokensPerDay: Number(e.TOKENS_PER_USER_DAY || 400000),
 };
 
-// Clés de services que chaque utilisateur peut fournir (en-tête -> variable d'environnement du conteneur).
+// Clés de services (en-tête -> variable d'environnement du conteneur).
+// Les en-têtes restent acceptés mais ne sont plus obligatoires : l'utilisateur peut aussi envoyer
+// ses clés dans le chat, l'IA les passe alors en paramètres de run_task (voir svcFromParams).
 const SVC = {
   "x-svc-vercel": "VERCEL_TOKEN",
   "x-svc-cloudflare": "CLOUDFLARE_API_TOKEN",
@@ -52,6 +54,18 @@ const svcFrom = (h) => {
   }
   return o;
 };
+
+// Clés envoyées dans le chat : paramètres facultatifs de run_task -> variables du conteneur.
+const svcFromParams = (p) => {
+  const o = {};
+  if (p.vercel_token) o.VERCEL_TOKEN = p.vercel_token;
+  if (p.cloudflare_token) o.CLOUDFLARE_API_TOKEN = p.cloudflare_token;
+  if (p.render_key) o.RENDER_API_KEY = p.render_key;
+  if (p.fly_token) o.FLY_API_TOKEN = p.fly_token;
+  return o;
+};
+
+const tokenParam = (label) => z.string().min(8).max(500).regex(/^\S+$/).optional().describe(label);
 
 // ---------------------------------------------------------------- base de données
 const dbPath = e.DB_PATH || "/data/orch.db";
@@ -106,12 +120,26 @@ async function linkedToken(userId) {
   }
 }
 
+// GitHub : les deux voies marchent. 1) compte connecté via LibreChat (prioritaire),
+// 2) token envoyé dans le chat (paramètre github_token), 3) ancien en-tête X-GitHub-Token (secours).
+async function pickGithub(userId, chatToken, headerToken) {
+  const linked = await linkedToken(userId);
+  if (linked) return linked;
+  for (const t of [chatToken, headerToken]) {
+    if (t && !t.includes("{{") && t.length >= 20) return t;
+  }
+  return "";
+}
+
+const githubMissing = (userId, then) =>
+  `GitHub n'est pas encore connecté pour cet utilisateur. Propose-lui deux choix : (1) connecter son compte GitHub avec ce lien, à lui donner tel quel (une seule fois, valable 30 minutes) : ${connectLink(userId)} ; ou (2) générer un token GitHub avec accès à son dépôt (droits Contents et Pull requests en lecture/écriture) et te l'envoyer dans le chat. Si c'est un token, rappelle ${then} en le passant dans github_token.`;
+
 // ---------------------------------------------------------------- recherche de dépôts (noms approximatifs)
 const norm = (s) =>
   String(s || "")
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "");
+    .replace(/[\u0300-\u036f]/g, "");
 const words = (s) => norm(s).split(/[^a-z0-9]+/).filter((w) => w.length >= 2);
 
 function lev(a, b) {
@@ -276,22 +304,19 @@ sweep();
 const ok = (t) => ({ content: [{ type: "text", text: t }] });
 const ko = (t) => ({ content: [{ type: "text", text: t }], isError: true });
 
-function buildServer(userId, ghToken, svc) {
-  const s = new McpServer({ name: "fly-sandboxes", version: "2.1.0" });
+function buildServer(userId, ghHeader, svcHeaders) {
+  const s = new McpServer({ name: "fly-sandboxes", version: "2.2.0" });
 
   s.tool(
     "find_repos",
-    "Cherche parmi les dépôts GitHub de l'utilisateur (publics et privés) ceux qui ressemblent à un nom ou à des mots-clés, même approximatifs ou mal orthographiés. À appeler AVANT run_task dès que l'utilisateur ne donne pas le nom exact proprietaire/nom. Retourne une courte liste à proposer à l'utilisateur pour confirmation.",
+    "Cherche parmi les dépôts GitHub de l'utilisateur (publics et privés) ceux qui ressemblent à un nom ou à des mots-clés, même approximatifs ou mal orthographiés. À appeler AVANT run_task dès que l'utilisateur ne donne pas le nom exact proprietaire/nom. Retourne une courte liste à proposer à l'utilisateur pour confirmation. Si l'utilisateur t'a envoyé un token GitHub dans le chat, passe-le dans github_token.",
     {
       query: z.string().min(2).max(100).describe("Nom approximatif ou mots-clés du projet, tels que l'utilisateur les a écrits"),
+      github_token: tokenParam("Token GitHub envoyé par l'utilisateur dans le chat (seulement s'il n'a pas connecté son compte)"),
     },
-    async ({ query }) => {
-      const gh = (await linkedToken(userId)) || (ghToken && !ghToken.includes("{{") && ghToken.length >= 20 ? ghToken : "");
-      if (!gh) {
-        return ko(
-          `GitHub n'est pas encore connecté pour cet utilisateur. Donne-lui ce lien tel quel pour connecter son compte GitHub (une seule fois, valable 30 minutes), puis il pourra redemander : ${connectLink(userId)}`
-        );
-      }
+    async ({ query, github_token }) => {
+      const gh = await pickGithub(userId, github_token, ghHeader);
+      if (!gh) return ko(githubMissing(userId, "find_repos"));
       try {
         const repos = await searchRepos(gh, query);
         if (!repos.length) {
@@ -300,29 +325,33 @@ function buildServer(userId, ghToken, svc) {
         return ok(JSON.stringify(repos));
       } catch (err) {
         console.error("find_repos:", err.message);
-        return ko("Impossible de lire les dépôts GitHub pour le moment.");
+        return ko("Impossible de lire les dépôts GitHub pour le moment. Si l'utilisateur a envoyé un token, il est peut-être invalide ou sans accès à ses dépôts.");
       }
     }
   );
 
   s.tool(
     "run_task",
-    "Exécute une tâche de développement ou de déploiement dans un conteneur Linux isolé et jetable : clone d'un dépôt GitHub (ou création d'un nouveau projet), vérifications automatiques, correction par l'IA, commandes (Vercel, Cloudflare, Render, Fly...), push et pull request. Appeler UNE seule fois ; retourne un job_id tout de suite. Ne pas lire les fichiers soi-même. Le nom du dépôt doit être exact : s'il ne l'est pas, appeler find_repos d'abord.",
+    "Exécute une tâche de développement ou de déploiement dans un conteneur Linux isolé et jetable : clone d'un dépôt GitHub (ou création d'un nouveau projet), vérifications automatiques, correction par l'IA, commandes (Vercel, Cloudflare, Render, Fly...), push et pull request. Appeler UNE seule fois ; retourne un job_id tout de suite. Ne pas lire les fichiers soi-même. Le nom du dépôt doit être exact : s'il ne l'est pas, appeler find_repos d'abord. Clés de services : si la tâche demande Vercel, Cloudflare, Render ou Fly.io, demande à l'utilisateur de générer sa clé (token) sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre correspondant. Ne demande que les clés dont la tâche a besoin.",
     {
       repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional().describe("Dépôt existant : proprietaire/nom"),
       new_repo_name: z.string().regex(/^[\w.-]{1,100}$/).optional().describe("Nom d'un NOUVEAU dépôt privé à créer (au lieu de repo)"),
       instructions: z.string().min(10).max(4000).describe("Ce qu'il faut faire : bug à corriger, projet à créer, déploiement à lancer"),
       base_branch: z.string().max(100).regex(/^[\w./-]+$/).optional(),
+      github_token: tokenParam("Token GitHub envoyé dans le chat (seulement si l'utilisateur n'a pas connecté son compte GitHub)"),
+      vercel_token: tokenParam("Clé Vercel envoyée par l'utilisateur dans le chat, si la tâche déploie sur Vercel"),
+      cloudflare_token: tokenParam("Clé Cloudflare envoyée par l'utilisateur dans le chat, si la tâche utilise Cloudflare"),
+      render_key: tokenParam("Clé Render envoyée par l'utilisateur dans le chat, si la tâche utilise Render"),
+      fly_token: tokenParam("Clé Fly.io envoyée par l'utilisateur dans le chat, si la tâche utilise Fly.io"),
     },
-    async ({ repo, new_repo_name, instructions, base_branch }) => {
+    async (args) => {
+      const { repo, new_repo_name, instructions, base_branch } = args;
       if (!repo && !new_repo_name) return ko("Indique repo (dépôt existant) ou new_repo_name (nouveau projet).");
-      // Le compte GitHub connecté via LibreChat passe en premier ; l'ancien token saisi à la main reste un secours.
-      const gh = (await linkedToken(userId)) || (ghToken && !ghToken.includes("{{") && ghToken.length >= 20 ? ghToken : "");
-      if (!gh) {
-        return ko(
-          `GitHub n'est pas encore connecté pour cet utilisateur. Donne-lui ce lien tel quel pour connecter son compte GitHub (une seule fois, valable 30 minutes), puis il pourra redemander sa tâche : ${connectLink(userId)}`
-        );
-      }
+      // Le compte GitHub connecté via LibreChat passe en premier ; sinon le token envoyé dans le chat.
+      const gh = await pickGithub(userId, args.github_token, ghHeader);
+      if (!gh) return ko(githubMissing(userId, "run_task"));
+      // Les clés envoyées dans le chat priment sur d'éventuels en-têtes.
+      const svc = { ...svcHeaders, ...svcFromParams(args) };
       const r = reserveJob(userId, repo || `(nouveau)/${new_repo_name}`, base_branch, instructions);
       if (r.error) return ko(r.error);
       creds.set(r.id, { ghToken: gh, repo: repo || null, newRepo: new_repo_name || null, base: base_branch || null, instructions, svc, exp: Date.now() + 5 * 60000 });

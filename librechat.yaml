@@ -124,9 +124,12 @@ mcpServers:
   # conteneur par tâche (clone, vérifications, correction, déploiement, push, PR) puis le détruit.
   # chatMenu: false = ce serveur seul est caché du menu + ; les autres serveurs y restent visibles.
   # Il est activé en arrière-plan pour Aube et Soleil (modelSpecs.mcpServers) ; l'IA décide seule.
-  # GitHub : plus de token à saisir. L'utilisateur connecte son compte GitHub une fois, soit par le
-  # bouton « connexion-github » du menu +, soit par le lien donné par l'outil ; l'orchestrateur
-  # récupère son token chiffré (route /api/github-link de LibreChat).
+  # AUCUNE variable utilisateur à remplir : la connexion ne dépend plus d'aucune clé.
+  # GitHub, deux voies : l'utilisateur connecte son compte une fois (bouton « connexion-github » du
+  # menu + ou lien donné par l'outil ; l'orchestrateur récupère son token chiffré via
+  # /api/github-link de LibreChat), OU il envoie un token GitHub dans le chat.
+  # Vercel, Cloudflare, Render, Fly.io : quand la tâche en a besoin, l'IA demande à l'utilisateur de
+  # générer sa clé et de l'envoyer dans le chat, puis la passe à run_task (paramètres facultatifs).
   # Outils : find_repos (cherche les dépôts de l'utilisateur), run_task, get_job, my_quota.
   # L'identité vient de LibreChat (non falsifiable) ; quotas de tâches et de tokens par utilisateur.
   # Secret Fly : ORCHESTRATOR_SECRET.
@@ -137,22 +140,5 @@ mcpServers:
     headers:
       Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
       X-User-Id: "{{LIBRECHAT_USER_ID}}"
-      X-Svc-Vercel: "{{VERCEL_TOKEN}}"
-      X-Svc-Cloudflare: "{{CLOUDFLARE_API_TOKEN}}"
-      X-Svc-Render: "{{RENDER_API_KEY}}"
-      X-Svc-Fly: "{{FLY_API_TOKEN}}"
-    customUserVars:
-      VERCEL_TOKEN:
-        title: "Clé Vercel"
-        description: "Facultatif. Si tu n'en as pas, écris : aucun"
-      CLOUDFLARE_API_TOKEN:
-        title: "Clé Cloudflare"
-        description: "Facultatif. Si tu n'en as pas, écris : aucun"
-      RENDER_API_KEY:
-        title: "Clé Render"
-        description: "Facultatif. Si tu n'en as pas, écris : aucun"
-      FLY_API_TOKEN:
-        title: "Clé Fly.io"
-        description: "Facultatif. Si tu n'en as pas, écris : aucun"
     timeout: 60000
-    serverInstructions: "Pour toute tâche de code, de projet ou de déploiement : si l'utilisateur ne donne pas le nom exact du dépôt (proprietaire/nom), appelle d'abord find_repos avec les mots qu'il a écrits, puis propose-lui les dépôts trouvés en une phrase courte (« Tu parles de X ? ») et attends son oui avant d'appeler run_task. S'il donne le nom exact, appelle run_task directement. Appelle run_task une seule fois, puis dis à l'utilisateur de redemander le statut plus tard (get_job). Ne boucle jamais. Si un outil répond que GitHub n'est pas connecté, donne à l'utilisateur le lien fourni, tel quel, et dis-lui de redemander après la connexion."
+    serverInstructions: "Pour toute tâche de code, de projet ou de déploiement : si l'utilisateur ne donne pas le nom exact du dépôt (proprietaire/nom), appelle d'abord find_repos avec les mots qu'il a écrits, puis propose-lui les dépôts trouvés en une phrase courte (« Tu parles de X ? ») et attends son oui avant d'appeler run_task. S'il donne le nom exact, appelle run_task directement. Appelle run_task une seule fois, puis dis à l'utilisateur de redemander le statut plus tard (get_job). Ne boucle jamais. Si un outil répond que GitHub n'est pas connecté, propose les deux choix indiqués par l'outil (lien de connexion tel quel, ou token GitHub envoyé dans le chat). Si la tâche demande Vercel, Cloudflare, Render ou Fly.io, dis à l'utilisateur de générer sa clé sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre de run_task correspondant. Ne demande jamais une clé dont la tâche n'a pas besoin."
