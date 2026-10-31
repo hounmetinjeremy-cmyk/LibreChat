@@ -8,8 +8,7 @@ RUN npm install -g --no-audit --no-fund vercel wrangler \
  && ln -sf /usr/local/bin/flyctl /usr/local/bin/fly
 RUN useradd -m -s /bin/bash worker && mkdir /work && chown worker /work
 WORKDIR /app
-COPY package.json run.js patch-compact.js ./
-RUN node patch-compact.js
+COPY package.json run.js ./
 USER worker
 ENV HOME=/home/worker
 CMD ["node", "/app/run.js"]

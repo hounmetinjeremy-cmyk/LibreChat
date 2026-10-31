@@ -111,6 +111,33 @@ const safe = (p) => {
   return full;
 };
 
+// Extraits des fichiers cités par l'erreur de départ (2 fichiers, ~50 lignes chacun) : donnés à l'IA dès la
+// première étape, pour qu'elle n'ait pas à les demander (chaque aller-retour renvoie tout l'historique).
+function errorContext(out, maxFiles = 2, radius = 25) {
+  const found = new Map();
+  const re = /((?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|jsx|tsx|js|ts|py|json|css|html|vue|go|rb|php))(?:["']?[:(,]\s*(?:line\s*)?(\d+))?/g;
+  let m;
+  while ((m = re.exec(out)) && found.size < maxFiles) {
+    const rel = m[1].replace(/^\.\//, "").replace(/^work\/repo\//, "");
+    if (found.has(rel) || rel.includes("node_modules") || /(^|\/)package-lock\.json$/.test(rel)) continue;
+    try {
+      const st = fs.statSync(safe(rel));
+      if (!st.isFile() || st.size > 400000) continue;
+    } catch {
+      continue;
+    }
+    found.set(rel, m[2] ? Number(m[2]) : 1);
+  }
+  let text = "";
+  for (const [rel, line] of found) {
+    const lines = fs.readFileSync(safe(rel), "utf8").split("\n");
+    const a = Math.max(1, line - radius);
+    const b = Math.min(lines.length, line + radius);
+    text += `\n--- ${rel} (lignes ${a}-${b} sur ${lines.length}) ---\n` + lines.slice(a - 1, b).map((l, i) => `${a + i}: ${l.slice(0, 200)}`).join("\n");
+  }
+  return text.length > 5000 ? text.slice(0, 5000) + "\n[...]" : text;
+}
+
 const tools = {
   list_files({ dir = "." }) {
     const base = path.relative(ROOT, safe(dir));
@@ -130,6 +157,18 @@ const tools = {
     fs.writeFileSync(full, content);
     return `écrit : ${p}`;
   },
+  // Retouche : remplace UN extrait exact par un autre. Bien moins de tokens que réécrire le fichier entier.
+  edit_file({ path: p, old_str, new_str }) {
+    const full = safe(p);
+    if (path.relative(ROOT, full).startsWith(".github")) throw new Error("modification de .github interdite");
+    if (typeof old_str !== "string" || !old_str) throw new Error("old_str est vide");
+    const src = fs.readFileSync(full, "utf8");
+    const n = src.split(old_str).length - 1;
+    if (n === 0) throw new Error("old_str introuvable : relis le fichier avec read_file et recopie l'extrait exactement (espaces compris)");
+    if (n > 1) throw new Error(`old_str apparaît ${n} fois : ajoute des lignes autour pour qu'il soit unique`);
+    fs.writeFileSync(full, src.replace(old_str, () => String(new_str ?? "")));
+    return `modifié : ${p}`;
+  },
   run({ command }) {
     const r = sh(command);
     progress(`commande terminée (code ${r.code})`);
@@ -141,16 +180,42 @@ const T = (name, description, properties, required) => ({ type: "function", func
 const toolDefs = [
   T("list_files", "Liste les fichiers suivis par git (200 max).", { dir: { type: "string" } }, []),
   T("read_file", "Lit un fichier, 120 lignes max par appel.", { path: { type: "string" }, start: { type: "integer" }, end: { type: "integer" } }, ["path"]),
-  T("write_file", "Écrase un fichier avec son contenu complet. Le terminal relance ensuite la vérification tout seul et te donne le résultat.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"]),
+  T("edit_file", "Modifie un fichier EXISTANT : remplace un court extrait exact (old_str, unique dans le fichier) par new_str. À utiliser pour toute correction. Le terminal relance ensuite la vérification tout seul et te donne le résultat.", { path: { type: "string" }, old_str: { type: "string" }, new_str: { type: "string" } }, ["path", "old_str", "new_str"]),
+  T("write_file", "Crée un NOUVEAU fichier avec son contenu complet. Ne l'utilise pas pour modifier un fichier existant (utilise edit_file). Le terminal relance ensuite la vérification tout seul.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"]),
   T("run", "Exécute une commande shell dans le projet (120 s max) : vercel, wrangler, fly, curl, ou toute autre commande utile. Inutile pour relancer le test ou le build : le terminal le fait seul.", { command: { type: "string" } }, ["command"]),
   T("note", "Écrit une courte ligne visible par l'utilisateur dans le suivi (ex. « Erreur 1 corrigée : ... », « Je passe à l'erreur 2 »).", { text: { type: "string" } }, ["text"]),
   T("finish", "Termine la tâche avec un court résumé en deux parties : Corrigé et Reste à faire.", { summary: { type: "string" } }, ["summary"]),
 ];
 
-const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Après chaque fichier écrit, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
+const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Les extraits des fichiers cités par l'erreur te sont déjà donnés : ne les relis pas. Pour modifier un fichier existant, utilise edit_file (remplace un court extrait exact) ; write_file sert seulement à créer un nouveau fichier. Ne réécris jamais un fichier entier pour changer quelques lignes. Après chaque fichier modifié, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
 
-// Les anciennes sorties d'outils sont raccourcies pour économiser les tokens.
-const compact = (m) => m.map((x, i) => (x.role === "tool" && i < m.length - 6 && x.content.length > 300 ? { ...x, content: x.content.slice(0, 300) + " [...]" } : x));
+// Historique allégé : tout ce qui est plus ancien que les 6 derniers messages est réduit à quelques mots
+// (sorties d'outils, contenus des fichiers écrits, rapports de vérification). Les 2 premiers messages
+// (consigne et tâche) et les 6 derniers restent complets. Aucun message n'est supprimé : les appels
+// d'outils et leurs résultats restent appariés.
+const KEEP_FULL = 6;
+const shrinkArgs = (c) => {
+  const a = (c.function && c.function.arguments) || "";
+  if (a.length <= 300) return c;
+  let stub = "{}";
+  try {
+    const o = JSON.parse(a);
+    for (const k of Object.keys(o)) {
+      if (typeof o[k] === "string" && o[k].length > 200) o[k] = "[" + o[k].length + " caractères]";
+    }
+    stub = JSON.stringify(o);
+  } catch {}
+  return { ...c, function: { ...c.function, arguments: stub } };
+};
+const compact = (m) =>
+  m.map((x, i) => {
+    if (i < 2 || i >= m.length - KEEP_FULL) return x;
+    const text = typeof x.content === "string" ? x.content : "";
+    if (x.role === "tool" && text.length > 200) return { ...x, content: text.slice(0, 200) + " [...]" };
+    if (x.role === "user" && text.length > 400) return { ...x, content: text.slice(0, 400) + " [...]" };
+    if (x.role === "assistant" && Array.isArray(x.tool_calls)) return { ...x, tool_calls: x.tool_calls.map(shrinkArgs) };
+    return x;
+  });
 
 // Appel de l'IA. Limite temporaire du fournisseur (429, 503) : nouvelles tentatives après une courte attente.
 // Le budget de tokens de la tâche ou du jour (message « budget ») n'est pas réessayé.
@@ -197,7 +262,7 @@ async function agent(first) {
             out = "ok";
           } else if (tools[c.function.name]) {
             out = tools[c.function.name](args);
-            if (c.function.name === "write_file") dirty = true;
+            if (c.function.name === "write_file" || c.function.name === "edit_file") dirty = true;
           } else {
             out = "outil inconnu";
           }
@@ -258,7 +323,13 @@ try {
   const checks = job.newRepo ? "Projet vide, rien à vérifier." : autoChecks();
   progress("Vérifications terminées, l'IA analyse les erreurs");
   const files = git(["ls-files"]).split("\n").filter(Boolean);
-  const first = `Dépôt : ${repo}\nTâche : ${job.instructions}\n\nFichiers (${files.length}) :\n${files.slice(0, 60).join("\n")}\n\nVérifications automatiques :\n${checks}\n\nRappel : corrige les erreurs une à la fois ; le terminal relance seul la vérification après chaque fichier écrit ; continue jusqu'à ce que tout passe.`;
+  let excerpts = "";
+  if (CHECK && CHECK.failedAtStart) {
+    try {
+      excerpts = errorContext(checks);
+    } catch {}
+  }
+  const first = `Dépôt : ${repo}\nTâche : ${job.instructions}\n\nFichiers (${files.length}) :\n${files.slice(0, 60).join("\n")}\n\nVérifications automatiques :\n${checks}${excerpts ? `\n\nExtraits des fichiers cités par l'erreur (déjà lus pour toi) :${excerpts}` : ""}\n\nRappel : corrige les erreurs une à la fois ; le terminal relance seul la vérification après chaque fichier écrit ; continue jusqu'à ce que tout passe.`;
 
   const summary = await agent(first);
 
