@@ -17,9 +17,12 @@ primary_region = 'ams'
   MAX_RUNTIME_SEC = '900'
   MAX_CONCURRENT_PER_USER = '1'
   MAX_CONCURRENT_GLOBAL = '4'
-  DAILY_JOBS_PER_USER = '20'
+  DAILY_JOBS_PER_USER = '50'
   TOKENS_PER_JOB = '1000000'
-  TOKENS_PER_USER_DAY = '2000000'
+  TOKENS_PER_USER_DAY = '5000000'
+  # Remise à zéro des compteurs du jour (tâches et tokens, tous les utilisateurs) : elle a lieu au déploiement
+  # quand cette valeur change. Pour recommencer plus tard : changer la valeur (ex. 'reset-2') et redéployer.
+  QUOTA_RESET_ID = 'reset-1'
 
   # ---- Modèle de l'agent du conteneur : garder UN SEUL des deux blocs actif.
   # Pour changer : décommenter l'autre bloc, commenter celui-ci, puis remplacer le secret GitHub
