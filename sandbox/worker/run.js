@@ -117,6 +117,9 @@ exit $c` + "\n}";
 // failedAtStart : la vérification échouait au départ (sinon rien à réparer, pas de fin automatique).
 let CHECK = null;
 let PLAN = [];
+let TIER = "aube"; // « soleil » : un expert (modèle fort) peut conseiller l'agent quand il est bloqué
+let LAST_OUT = ""; // dernière sortie de vérification (donnée à l'expert)
+const TRIED = []; // dernières actions de l'agent (données à l'expert)
 
 // Vérifications automatiques : l'IA part des ERREURS, elle ne lit pas tout le projet.
 function autoChecks() {
@@ -139,11 +142,13 @@ function autoChecks() {
     const command = parts.join(" && ");
     const r = sh(command, 280000);
     CHECK = { label, command, failedAtStart: r.code !== 0 };
+    LAST_OUT = r.out;
     return `${label} -> code ${r.code}\n${tail(r.out)}`;
   }
   if (has("requirements.txt") || has("pyproject.toml")) {
     const r = sh("python3 -m pytest -x -q 2>&1", 240000);
     CHECK = { label: "pytest", command: "python3 -m pytest -x -q 2>&1", failedAtStart: r.code !== 0 };
+    LAST_OUT = r.out;
     return `pytest -> code ${r.code}\n${tail(r.out)}`;
   }
   return "Aucune vérification automatique détectée.";
@@ -184,7 +189,29 @@ function errorContext(out, maxFiles = 2, radius = 15) {
   return text.length > 5000 ? text.slice(0, 5000) + "\n[...]" : text;
 }
 
+// Soleil : demande des instructions à l'expert (modèle fort). Il reçoit peu de texte : l'erreur, les extraits
+// des fichiers cités et les dernières actions, jamais l'historique entier.
+async function askExpert(question) {
+  let excerpts = "";
+  try {
+    excerpts = LAST_OUT ? errorContext(LAST_OUT) : "";
+  } catch {}
+  const context = [
+    LAST_OUT ? `Fin de la dernière vérification :\n${tail(scrub(LAST_OUT), 2500)}` : "",
+    excerpts ? `Extraits des fichiers cités :${excerpts}` : "",
+    TRIED.length ? `Dernières actions de l'agent :\n${TRIED.slice(-10).join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
+  progress("Consultation de l'expert (Claude)");
+  const r = await api("/internal/llm/expert", { method: "POST", body: JSON.stringify({ question, context }) });
+  progress("L'expert a répondu");
+  return String(r.advice || "");
+}
+
 const tools = {
+  async ask_expert({ question }) {
+    if (TIER !== "soleil") throw new Error("expert indisponible avec ce modèle");
+    return trunc(scrub(await askExpert(String(question || "Je suis bloqué, aide-moi.").slice(0, 1500))), 4000);
+  },
   list_files({ dir = "." }) {
     const base = path.relative(ROOT, safe(dir));
     const files = git(["ls-files"]).split("\n").filter((f) => f && (!base || f.startsWith(base + "/") || f === base));
@@ -258,11 +285,13 @@ const toolDefs = [
   T("write_file", "Crée un NOUVEAU fichier avec son contenu complet. Ne l'utilise pas pour modifier un fichier existant (utilise edit_file). Le terminal relance ensuite la vérification tout seul.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"]),
   T("plan", "Enregistre ton plan : 3 à 6 étapes courtes, dans l'ordre. À faire en premier pour un nouveau projet ou une tâche de plusieurs fichiers.", { steps: { type: "array", items: { type: "string" } } }, ["steps"]),
   T("verify", "Lance maintenant la vérification complète du projet : installation, test ou build, démarrage de l'application et ouverture de la page dans un navigateur. À appeler quand les fichiers du projet sont écrits. Ensuite le terminal la relance tout seul après chaque fichier modifié.", {}, []),
+  T("ask_expert", "Demande des instructions précises à un expert (modèle plus fort). À utiliser seulement si tu es bloqué après deux essais sur la même erreur : 3 fois au plus par tâche. Décris le blocage en une ou deux phrases ; l'erreur et les extraits sont ajoutés automatiquement. Applique ensuite ses instructions avec edit_file.", { question: { type: "string" } }, ["question"]),
   T("run", "Exécute une commande shell dans le projet (120 s max) : vercel, wrangler, fly, curl, ou toute autre commande utile. Inutile pour relancer le test ou le build : le terminal le fait seul.", { command: { type: "string" } }, ["command"]),
   T("note", "Écrit une courte ligne visible par l'utilisateur dans le suivi (ex. « Erreur 1 corrigée : ... », « Je passe à l'erreur 2 »).", { text: { type: "string" } }, ["text"]),
   T("finish", "Termine la tâche avec un court résumé en deux parties : Corrigé et Reste à faire.", { summary: { type: "string" } }, ["summary"]),
 ];
 
+const SOLEIL_NOTE = " Tu disposes aussi de l'outil ask_expert : si tu es bloqué après deux essais sur la même erreur, appelle-le (3 fois au plus) et applique ses instructions à la lettre avec edit_file. Ne l'appelle pas pour une erreur que tu peux régler toi-même.";
 const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Les extraits des fichiers cités par l'erreur te sont déjà donnés : ne les relis pas. Pour trouver où quelque chose est défini ou utilisé, utilise search_code plutôt que de lire des fichiers entiers. Pour modifier un fichier existant, utilise edit_file (remplace un court extrait exact) ; write_file sert seulement à créer un nouveau fichier. Ne réécris jamais un fichier entier pour changer quelques lignes. Après chaque fichier modifié, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. La vérification comprend aussi le démarrage de l'application (npm start, page ouverte dans un navigateur) : si elle plante au démarrage, tu reçois l'erreur de démarrage. La page de l'application est aussi ouverte dans un navigateur : une erreur JavaScript ou un code HTTP 500 te sera signalé. Pour un nouveau projet ou une tâche de plusieurs fichiers : commence par l'outil plan (3 à 6 étapes courtes), réalise-les dans l'ordre, et quand les fichiers sont écrits appelle verify puis corrige ce qu'il signale. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
 
 // Historique allégé : tout ce qui est plus ancien que les 6 derniers messages est réduit à quelques mots
@@ -313,6 +342,8 @@ async function llm(body) {
     } catch (err) {
       const m = / (429|503) /.exec(err.message);
       if (!m || /budget/.test(err.message) || attempt >= 4) throw err;
+      // Limite journalière du fournisseur (plan gratuit) : attendre ne sert à rien.
+      if (/free_tier|PerDay|per day|exceeded your current quota/i.test(err.message)) throw new Error("Limite journalière du fournisseur de l'IA atteinte : change de clé ou de modèle. " + err.message.slice(0, 200));
       const wait = 15 * (attempt + 1);
       progress(`Limite de l'IA atteinte (${m[1]}), nouvelle tentative dans ${wait} s`);
       await new Promise((r) => setTimeout(r, wait * 1000));
@@ -321,14 +352,16 @@ async function llm(body) {
 }
 
 async function agent(first) {
-  const messages = [{ role: "system", content: SYSTEM }, { role: "user", content: first }];
+  const messages = [{ role: "system", content: SYSTEM + (TIER === "soleil" ? SOLEIL_NOTE : "") }, { role: "user", content: first }];
+  const toolList = toolDefs.filter((d) => d.function.name !== "ask_expert" || TIER === "soleil");
+  let autoAsked = 0;
   const notes = [];
   let reruns = 0;
   // Garde-fou : même erreur après plusieurs corrections = l'IA tourne en rond (et brûle des tokens).
   let lastSig = "";
   let same = 0;
   for (let step = 0; step < 40; step++) {
-    const data = await llm({ messages: compact(messages), tools: toolDefs, tool_choice: "auto" });
+    const data = await llm({ messages: compact(messages), tools: toolList, tool_choice: "auto" });
     const msg = data.choices?.[0]?.message;
     if (!msg) throw new Error("réponse LLM vide");
     messages.push(msg);
@@ -346,12 +379,14 @@ async function agent(first) {
           progress(text);
           out = "ok";
         } else {
-          progress(`${c.function.name} ${args.path || args.command || args.pattern || args.dir || ""}`.trim());
+          const label = `${c.function.name} ${args.path || args.command || args.pattern || args.dir || ""}`.trim();
+          progress(label);
+          TRIED.push(label.slice(0, 160));
           if (c.function.name === "finish") {
             summary = args.summary || "Terminé.";
             out = "ok";
           } else if (tools[c.function.name]) {
-            out = tools[c.function.name](args);
+            out = await tools[c.function.name](args);
             if (c.function.name === "write_file" || c.function.name === "edit_file") dirty = true;
           } else {
             out = "outil inconnu";
@@ -370,6 +405,7 @@ async function agent(first) {
       progress(`Vérification relancée (${CHECK.label})`);
       const r = sh(CHECK.command, 280000);
       progress(r.code === 0 ? "Vérification réussie" : `Vérification en erreur (code ${r.code})`);
+      if (r.code !== 0) LAST_OUT = r.out;
       if (r.code === 0 && CHECK.failedAtStart) {
         const done = notes.length ? notes.join(" ; ") : "les erreurs de départ";
         return `Corrigé : ${done}. Reste à faire : rien (${CHECK.label} passe maintenant).`;
@@ -382,9 +418,20 @@ async function agent(first) {
         return `Corrigé : ${done}. Reste à faire : ${CHECK.label} échoue toujours avec la même erreur après ${same + 1} essais : ${sig.slice(-300)}`;
       }
       const hint = same >= 2 ? "\nATTENTION : l'erreur est identique après plusieurs corrections, tes modifications ne la changent pas. Relis le fichier autour de la ligne en erreur avec read_file, cherche la vraie cause avec search_code, et change d'approche." : "";
+      // Soleil : même erreur après plusieurs corrections -> l'expert donne les instructions, l'agent les applique.
+      let advice = "";
+      if (TIER === "soleil" && same >= 2 && autoAsked < 2) {
+        autoAsked++;
+        try {
+          advice = await askExpert("L'agent est bloqué : la même erreur revient après plusieurs corrections. Donne les instructions exactes pour la régler.");
+        } catch (err) {
+          progress(`Expert indisponible : ${scrub(err.message).slice(0, 100)}`);
+        }
+      }
+      const adviceText = advice ? `\nCONSEIL DE L'EXPERT (applique-le à la lettre avec edit_file) :\n${scrub(advice)}` : "";
       messages.push({
         role: "user",
-        content: `Vérification automatique relancée par le terminal : ${CHECK.label} -> code ${r.code}\n${tail(scrub(r.out))}\n${r.code === 0 ? "La vérification passe. Termine la tâche demandée puis appelle finish." : "Corrige l'erreur suivante, une seule à la fois."}${hint}${PLAN.length ? "\nRappel du plan : " + PLAN.map((x, i) => `${i + 1}. ${x}`).join(" | ") : ""}`,
+        content: `Vérification automatique relancée par le terminal : ${CHECK.label} -> code ${r.code}\n${tail(scrub(r.out))}\n${r.code === 0 ? "La vérification passe. Termine la tâche demandée puis appelle finish." : "Corrige l'erreur suivante, une seule à la fois."}${hint}${adviceText}${PLAN.length ? "\nRappel du plan : " + PLAN.map((x, i) => `${i + 1}. ${x}`).join(" | ") : ""}`,
       });
     }
   }
@@ -396,6 +443,7 @@ try {
   const job = await api("/internal/job");
   ghToken = job.ghToken;
   svcEnv = job.svc || {};
+  TIER = job.tier === "soleil" ? "soleil" : "aube";
 
   let repo = job.repo;
   let base = job.base;
