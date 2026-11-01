@@ -159,7 +159,7 @@ const safe = (p) => {
 
 // Extraits des fichiers cités par l'erreur de départ (2 fichiers, ~50 lignes chacun) : donnés à l'IA dès la
 // première étape, pour qu'elle n'ait pas à les demander (chaque aller-retour renvoie tout l'historique).
-function errorContext(out, maxFiles = 2, radius = 25) {
+function errorContext(out, maxFiles = 2, radius = 15) {
   const found = new Map();
   const re = /((?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|jsx|tsx|js|ts|py|json|css|html|vue|go|rb|php))(?:["']?[:(,]\s*(?:line\s*)?(\d+))?/g;
   let m;
@@ -292,7 +292,14 @@ const compact = (m) => {
     const text = typeof x.content === "string" ? x.content : "";
     if (x.role === "tool" && text.length > 200) return { ...x, content: text.slice(0, 200) + " [...]" };
     if (x.role === "user" && text.length > 400) return { ...x, content: text.slice(0, 400) + " [...]" };
-    if (x.role === "assistant" && Array.isArray(x.tool_calls)) return { ...x, tool_calls: x.tool_calls.map(shrinkArgs) };
+    if (x.role === "assistant") {
+      const compactContent = text.length > 300 ? text.slice(0, 300) + " [...]" : text;
+      return {
+        ...x,
+        ...(typeof x.content === "string" ? { content: compactContent } : {}),
+        ...(Array.isArray(x.tool_calls) ? { tool_calls: x.tool_calls.map(shrinkArgs) } : {}),
+      };
+    }
     return x;
   });
 };

@@ -9,7 +9,6 @@ const timeout = Number(process.env.E2E_AUTH_TIMEOUT ?? 15000);
 const chromiumChannel = process.env.E2E_CHROMIUM_CHANNEL || undefined;
 
 async function register(page: Page, user: User) {
-  await page.getByRole('link', { name: 'Sign up' }).click();
   await page.getByLabel('Full name').click();
   await page.getByLabel('Full name').fill(user.name);
   await page.getByLabel('Email').click();
@@ -30,9 +29,26 @@ async function registrationErrorIsVisible(page: Page) {
 }
 
 async function login(page: Page, user: User) {
-  await page.getByLabel('Email').fill(user.email);
-  await page.getByLabel('Password').fill(user.password);
-  await page.getByTestId('login-button').click();
+  const result = await page.evaluate(async ({ email, password }) => {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const text = await response.text();
+    let body: { token?: string } | null = null;
+    try {
+      body = text ? (JSON.parse(text) as { token?: string }) : null;
+    } catch {
+      body = null;
+    }
+    return { ok: response.ok, status: response.status, text, hasToken: Boolean(body?.token) };
+  }, { email: user.email, password: user.password });
+
+  if (!result.ok || !result.hasToken) {
+    throw new Error(`🤖: 🚨 login failed (${result.status}): ${result.text}`);
+  }
 }
 
 function appURL(baseURL: string, pathname = '') {
@@ -61,7 +77,6 @@ async function authenticate(config: FullConfig, user: User) {
       throw new Error('🤖: baseURL is not defined');
     }
     const conversationURL = appURL(baseURL, 'c/new');
-    const loginURL = appURL(baseURL, 'login');
 
     // Set localStorage before navigating to the page
     await page.context().addInitScript(() => {
@@ -69,7 +84,9 @@ async function authenticate(config: FullConfig, user: User) {
     });
     console.log('🤖: ✔️  localStorage: set Nav as Visible', storageState);
 
-    await page.goto(baseURL, { timeout });
+    // The current login page is Google-only and intentionally has no Sign up link.
+    // Registration remains available at its dedicated route for E2E-created users.
+    await page.goto(appURL(baseURL, 'register'), { timeout });
     await register(page, user);
     try {
       await page.waitForURL(conversationURL, { timeout });
@@ -78,7 +95,7 @@ async function authenticate(config: FullConfig, user: User) {
       if (await registrationErrorIsVisible(page)) {
         console.log('🤖: 🚨  user already exists');
         await cleanupUser(user);
-        await page.goto(baseURL, { timeout });
+        await page.goto(appURL(baseURL, 'register'), { timeout });
         await register(page, user);
         await page.waitForURL(conversationURL, { timeout });
       } else {
@@ -87,8 +104,11 @@ async function authenticate(config: FullConfig, user: User) {
     }
     console.log('🤖: ✔️  user successfully registered');
 
-    await page.goto(loginURL, { timeout });
+    // Registration creates the account but does not authenticate it.
+    // Use the local E2E login API directly; the login page may be configured
+    // for social-only presentation even though local auth is enabled for tests.
     await login(page, user);
+    await page.goto(conversationURL, { timeout });
     await page.waitForURL(conversationURL, { timeout });
     console.log('🤖: ✔️  user successfully authenticated');
 

@@ -85,6 +85,10 @@ export default async function cleanupUser(user: TUser) {
 
     console.log('🤖:  ✅  Deleted user from Database');
 
+    // Wait for Mongoose's model/index initialization before closing the shared
+    // test connection. Closing immediately after cleanup interrupts background
+    // createIndexes operations and emits misleading teardown errors.
+    await Promise.all(Object.values(db.models).map((model) => model.init()));
     await db.connection.close();
   } catch (error) {
     console.error('Error:', error);
