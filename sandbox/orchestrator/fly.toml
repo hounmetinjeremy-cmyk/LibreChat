@@ -20,6 +20,19 @@ primary_region = 'ams'
   DAILY_JOBS_PER_USER = '50'
   TOKENS_PER_JOB = '1000000'
   TOKENS_PER_USER_DAY = '5000000'
+  # Dépense : plafond par utilisateur et par mois, en dollars, selon le modèle choisi (Aube ou Soleil).
+  # Réglé à la moitié du prix de l'abonnement (Aube 15 $, Soleil 30 $) : la marge couvre les autres frais.
+  MONTHLY_SPEND_CAP_AUBE = '7.5'
+  MONTHLY_SPEND_CAP_SOLEIL = '15'
+  # Prix en dollars par million de tokens (utilisés si le fournisseur ne donne pas le coût de l'appel).
+  PRICE_IN_PER_M = '0.04'
+  PRICE_OUT_PER_M = '0.45'
+  # Soleil : l'expert (modèle fort) conseille le modèle de travail quand il est bloqué.
+  # Même clé OpenRouter que LLM_API_KEY. 3 consultations au plus par tâche.
+  EXPERT_MODEL = 'anthropic/claude-fable-5.1'
+  EXPERT_MAX_PER_JOB = '3'
+  EXPERT_PRICE_IN_PER_M = '10'
+  EXPERT_PRICE_OUT_PER_M = '50'
   # Remise à zéro des compteurs du jour (tâches et tokens, tous les utilisateurs) : elle a lieu au déploiement
   # quand cette valeur change. Pour recommencer plus tard : changer la valeur (ex. 'reset-2') et redéployer.
   QUOTA_RESET_ID = 'reset-1'
@@ -28,13 +41,13 @@ primary_region = 'ams'
   # Pour changer : décommenter l'autre bloc, commenter celui-ci, puis remplacer le secret GitHub
   # LLM_API_KEY par la clé du fournisseur et relancer le workflow « Déployer les sandboxes Fly.io ».
 
-  # Bloc 1 (actif) : Gemini direct (clé Google AI Studio)
-  LLM_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai'
-  LLM_MODEL = 'gemini-3-flash-preview'
+  # Bloc 1 : Gemini direct (clé Google AI Studio)
+  # LLM_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai'
+  # LLM_MODEL = 'gemini-3-flash-preview'
 
-  # Bloc 2 : OpenRouter (clé « sk-or-v1-... »)
-  # LLM_BASE_URL = 'https://openrouter.ai/api/v1'
-  # LLM_MODEL = 'deepseek/deepseek-v4-flash'
+  # Bloc 2 (actif) : OpenRouter (clé « sk-or-v1-... »), DeepSeek Flash pour le travail
+  LLM_BASE_URL = 'https://openrouter.ai/api/v1'
+  LLM_MODEL = 'deepseek/deepseek-v4-flash'
 
 [http_service]
   internal_port = 8080
