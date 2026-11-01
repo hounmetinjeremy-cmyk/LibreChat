@@ -159,7 +159,7 @@ const safe = (p) => {
 
 // Extraits des fichiers cités par l'erreur de départ (2 fichiers, ~50 lignes chacun) : donnés à l'IA dès la
 // première étape, pour qu'elle n'ait pas à les demander (chaque aller-retour renvoie tout l'historique).
-function errorContext(out, maxFiles = 2, radius = 25) {
+function errorContext(out, maxFiles = 2, radius = 15) {
   const found = new Map();
   const re = /((?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|jsx|tsx|js|ts|py|json|css|html|vue|go|rb|php))(?:["']?[:(,]\s*(?:line\s*)?(\d+))?/g;
   let m;
