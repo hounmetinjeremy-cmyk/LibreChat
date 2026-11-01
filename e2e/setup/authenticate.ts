@@ -28,6 +28,29 @@ async function registrationErrorIsVisible(page: Page) {
     .catch(() => false);
 }
 
+async function login(page: Page, user: User) {
+  const result = await page.evaluate(async ({ email, password }) => {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const text = await response.text();
+    let body: { token?: string } | null = null;
+    try {
+      body = text ? (JSON.parse(text) as { token?: string }) : null;
+    } catch {
+      body = null;
+    }
+    return { ok: response.ok, status: response.status, text, hasToken: Boolean(body?.token) };
+  }, { email: user.email, password: user.password });
+
+  if (!result.ok || !result.hasToken) {
+    throw new Error(`🤖: 🚨 login failed (${result.status}): ${result.text}`);
+  }
+}
+
 function appURL(baseURL: string, pathname = '') {
   const normalizedBaseURL = baseURL.endsWith('/') ? baseURL : `${baseURL}/`;
   return new URL(pathname.replace(/^\/+/, ''), normalizedBaseURL).toString();
@@ -81,8 +104,13 @@ async function authenticate(config: FullConfig, user: User) {
     }
     console.log('🤖: ✔️  user successfully registered');
 
-    // Registration signs the user in and redirects to the conversation page.
-    // Do not revisit /login: this deployment uses Google-only login UI.
+    // Registration creates the account but does not authenticate it.
+    // Use the local E2E login API directly; the login page may be configured
+    // for social-only presentation even though local auth is enabled for tests.
+    await login(page, user);
+    await page.goto(conversationURL, { timeout });
+    await page.waitForURL(conversationURL, { timeout });
+    console.log('🤖: ✔️  user successfully authenticated');
 
     await page.context().storageState({ path: storageState });
     console.log('🤖: ✔️  authentication state successfully saved in', storageState);
