@@ -292,7 +292,14 @@ const compact = (m) => {
     const text = typeof x.content === "string" ? x.content : "";
     if (x.role === "tool" && text.length > 200) return { ...x, content: text.slice(0, 200) + " [...]" };
     if (x.role === "user" && text.length > 400) return { ...x, content: text.slice(0, 400) + " [...]" };
-    if (x.role === "assistant" && Array.isArray(x.tool_calls)) return { ...x, tool_calls: x.tool_calls.map(shrinkArgs) };
+    if (x.role === "assistant") {
+      const compactContent = text.length > 300 ? text.slice(0, 300) + " [...]" : text;
+      return {
+        ...x,
+        ...(typeof x.content === "string" ? { content: compactContent } : {}),
+        ...(Array.isArray(x.tool_calls) ? { tool_calls: x.tool_calls.map(shrinkArgs) } : {}),
+      };
+    }
     return x;
   });
 };
