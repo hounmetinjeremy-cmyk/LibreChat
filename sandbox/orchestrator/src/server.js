@@ -27,6 +27,19 @@ const C = {
   llmKey: need("LLM_API_KEY"),
   llmBase: (e.LLM_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, ""),
   llmModel: e.LLM_MODEL || "gemini-2.5-flash",
+  // Prix en dollars par million de tokens (sert à calculer la dépense quand le fournisseur ne donne pas le coût).
+  priceIn: Number(e.PRICE_IN_PER_M || 0.04),
+  priceOut: Number(e.PRICE_OUT_PER_M || 0.45),
+  // Soleil : un expert (modèle fort) donne des instructions quand le modèle de travail est bloqué.
+  expertModel: e.EXPERT_MODEL || "anthropic/claude-fable-5.1",
+  expertBase: (e.EXPERT_BASE_URL || e.LLM_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, ""),
+  expertKey: e.EXPERT_API_KEY || need("LLM_API_KEY"),
+  expertMaxPerJob: Number(e.EXPERT_MAX_PER_JOB || 3),
+  expertPriceIn: Number(e.EXPERT_PRICE_IN_PER_M || 10),
+  expertPriceOut: Number(e.EXPERT_PRICE_OUT_PER_M || 50),
+  // Plafond de dépense par utilisateur et par mois, en dollars, selon le modèle choisi (Aube ou Soleil).
+  capAube: Number(e.MONTHLY_SPEND_CAP_AUBE || 7.5),
+  capSoleil: Number(e.MONTHLY_SPEND_CAP_SOLEIL || 15),
   region: e.SANDBOX_REGION || "ams",
   memoryMb: Number(e.SANDBOX_MEMORY_MB || 1024),
   maxRuntimeSec: Number(e.MAX_RUNTIME_SEC || 900),
@@ -93,7 +106,35 @@ try {
   db.exec("ALTER TABLE jobs ADD COLUMN activity TEXT");
 } catch {}
 
+// Niveau (Aube ou Soleil), consultations de l'expert et coût en millionièmes de dollar, par tâche.
+for (const col of ["tier TEXT", "expert_calls INTEGER NOT NULL DEFAULT 0", "cost_micro INTEGER NOT NULL DEFAULT 0"]) {
+  try {
+    db.exec(`ALTER TABLE jobs ADD COLUMN ${col}`);
+  } catch {}
+}
+// Dépense du mois par utilisateur, en millionièmes de dollar.
+db.exec("CREATE TABLE IF NOT EXISTS spend (user_id TEXT NOT NULL, month TEXT NOT NULL, micro INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, month))");
+
 const today = () => new Date().toISOString().slice(0, 10);
+const thisMonth = () => new Date().toISOString().slice(0, 7);
+const tierOf = (t) => (t === "soleil" ? "soleil" : "aube");
+const capMicro = (t) => Math.round((tierOf(t) === "soleil" ? C.capSoleil : C.capAube) * 1e6);
+const monthSpend = (userId) => db.prepare("SELECT micro FROM spend WHERE user_id=? AND month=?").get(userId, thisMonth())?.micro || 0;
+// Coût d'un appel en millionièmes de dollar : le coût donné par le fournisseur (OpenRouter) s'il existe,
+// sinon tokens envoyés et reçus x prix par million (1 $ par million de tokens = 1 millionième de $ par token).
+function costMicro(usage, pin, pout, fallbackTokens) {
+  if (Number.isFinite(Number(usage?.cost)) && Number(usage.cost) > 0) return Math.round(Number(usage.cost) * 1e6);
+  const i = Number(usage?.prompt_tokens);
+  const o = Number(usage?.completion_tokens);
+  if (Number.isFinite(i) && Number.isFinite(o) && i + o > 0) return Math.round(i * pin + o * pout);
+  return Math.round((Number(usage?.total_tokens) || fallbackTokens) * pout);
+}
+// Enregistre jetons et coût d'un appel pour la tâche, la journée et le mois.
+const record = db.transaction((job, used, cost, expert) => {
+  db.prepare("UPDATE jobs SET tokens_used=tokens_used+?, cost_micro=cost_micro+?, expert_calls=expert_calls+? WHERE id=?").run(used, cost, expert ? 1 : 0, job.id);
+  db.prepare("INSERT INTO usage (user_id,day,tokens) VALUES (?,?,?) ON CONFLICT(user_id,day) DO UPDATE SET tokens=tokens+?").run(job.user_id, today(), used, used);
+  db.prepare("INSERT INTO spend (user_id,month,micro) VALUES (?,?,?) ON CONFLICT(user_id,month) DO UPDATE SET micro=micro+?").run(job.user_id, thisMonth(), cost, cost);
+});
 const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
 const safeEq = (a, b) => {
   const x = Buffer.from(a);
@@ -259,10 +300,11 @@ function finish(id, status, summary, extra = {}) {
   ).run(status, String(summary || "").slice(0, 2000), extra.branch || null, extra.pr_url || null, Date.now(), id);
 }
 
-function reserveJob(userId, repo, base, instructions) {
+function reserveJob(userId, repo, base, instructions, tier) {
   const day = today();
   return db.transaction(() => {
     const u = db.prepare("SELECT tokens, jobs FROM usage WHERE user_id=? AND day=?").get(userId, day) || { tokens: 0, jobs: 0 };
+    if (monthSpend(userId) >= capMicro(tier)) return { error: `Budget du mois atteint pour ${tierOf(tier) === "soleil" ? "Soleil" : "Aube"}. Il se renouvelle le mois prochain.` };
     if (u.jobs >= C.jobsPerDay) return { error: `Quota atteint : ${C.jobsPerDay} tâches par jour.` };
     if (u.tokens >= C.tokensPerDay) return { error: "Quota de tokens du jour atteint." };
     const mine = db.prepare(`SELECT COUNT(*) n FROM jobs WHERE user_id=? AND status IN ${ACTIVE}`).get(userId).n;
@@ -272,8 +314,8 @@ function reserveJob(userId, repo, base, instructions) {
     const id = crypto.randomBytes(6).toString("hex");
     const token = crypto.randomBytes(32).toString("hex");
     db.prepare(
-      "INSERT INTO jobs (id,user_id,repo,base,instructions,token_hash,status,created_at) VALUES (?,?,?,?,?,?,'queued',?)"
-    ).run(id, userId, repo, base || null, instructions, sha(token), Date.now());
+      "INSERT INTO jobs (id,user_id,repo,base,instructions,token_hash,status,created_at,tier) VALUES (?,?,?,?,?,?,'queued',?,?)"
+    ).run(id, userId, repo, base || null, instructions, sha(token), Date.now(), tierOf(tier));
     db.prepare("INSERT INTO usage (user_id,day,jobs) VALUES (?,?,1) ON CONFLICT(user_id,day) DO UPDATE SET jobs=jobs+1").run(userId, day);
     return { id, token };
   })();
@@ -312,7 +354,7 @@ sweep();
 const ok = (t) => ({ content: [{ type: "text", text: t }] });
 const ko = (t) => ({ content: [{ type: "text", text: t }], isError: true });
 
-function buildServer(userId, ghHeader, svcHeaders) {
+function buildServer(userId, ghHeader, svcHeaders, tier) {
   const s = new McpServer({ name: "fly-sandboxes", version: "2.4.0" });
 
   s.tool(
@@ -360,7 +402,7 @@ function buildServer(userId, ghHeader, svcHeaders) {
       if (!gh) return ko(githubMissing(userId, "run_task"));
       // Les clés envoyées dans le chat priment sur d'éventuels en-têtes.
       const svc = { ...svcHeaders, ...svcFromParams(args) };
-      const r = reserveJob(userId, repo || `(nouveau)/${new_repo_name}`, base_branch, instructions);
+      const r = reserveJob(userId, repo || `(nouveau)/${new_repo_name}`, base_branch, instructions, tier);
       if (r.error) return ko(r.error);
       creds.set(r.id, { ghToken: gh, repo: repo || null, newRepo: new_repo_name || null, base: base_branch || null, instructions, svc, exp: Date.now() + 5 * 60000 });
       try {
@@ -407,7 +449,7 @@ function buildServer(userId, ghHeader, svcHeaders) {
       if (running) {
         return ok(JSON.stringify({ job_id: j.id, status: j.status, consigne: `Toujours en cours : n'écris rien, rappelle get_job avec wait_seconds=${C.maxWait}. Le panneau en direct montre déjà les étapes.` }));
       }
-      return ok(JSON.stringify({ job_id: j.id, repo: j.repo, status: j.status, summary: j.summary, branch: j.branch, pull_request: j.pr_url, tokens_used: j.tokens_used }));
+      return ok(JSON.stringify({ job_id: j.id, repo: j.repo, status: j.status, summary: j.summary, branch: j.branch, pull_request: j.pr_url, tokens_used: j.tokens_used, cout_usd: Number((j.cost_micro / 1e6).toFixed(3)) }));
     }
   );
 
@@ -417,6 +459,8 @@ function buildServer(userId, ghHeader, svcHeaders) {
       jobs_restants: Math.max(C.jobsPerDay - u.jobs, 0),
       tokens_restants: Math.max(C.tokensPerDay - u.tokens, 0),
       tokens_max_par_tache: C.tokensPerJob,
+      depense_du_mois_usd: Number((monthSpend(userId) / 1e6).toFixed(2)),
+      plafond_du_mois_usd: capMicro(tier) / 1e6,
     }));
   });
 
@@ -453,6 +497,8 @@ app.get("/jobs/:id", mcpAuth, (req, res) => {
     branch: j.branch,
     pull_request: j.pr_url,
     tokens_used: j.tokens_used,
+    cost_usd: Number((j.cost_micro / 1e6).toFixed(3)),
+    tier: j.tier,
     activity: String(j.activity || "").split("\n").filter(Boolean).slice(-40),
     created_at: j.created_at,
     finished_at: j.finished_at,
@@ -460,7 +506,7 @@ app.get("/jobs/:id", mcpAuth, (req, res) => {
 });
 
 app.post("/mcp", mcpAuth, express.json({ limit: "1mb" }), async (req, res) => {
-  const server = buildServer(req.userId, String(req.headers["x-github-token"] || ""), svcFrom(req.headers));
+  const server = buildServer(req.userId, String(req.headers["x-github-token"] || ""), svcFrom(req.headers), tierOf(req.query.tier));
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", () => {
     transport.close();
@@ -483,7 +529,7 @@ app.get("/internal/job", (req, res) => {
   const c = creds.get(job.id);
   if (!c || c.exp < Date.now()) return res.status(410).json({ error: "identifiants expirés" });
   creds.delete(job.id);
-  res.json({ id: job.id, repo: c.repo, newRepo: c.newRepo, base: c.base, instructions: c.instructions, ghToken: c.ghToken, svc: c.svc });
+  res.json({ id: job.id, repo: c.repo, newRepo: c.newRepo, base: c.base, instructions: c.instructions, ghToken: c.ghToken, svc: c.svc, tier: tierOf(job.tier) });
 });
 
 // Journal d'activité : une ligne courte par action du conteneur, lue ensuite par get_job.
@@ -506,6 +552,7 @@ app.post("/internal/llm/chat/completions", express.json({ limit: "4mb" }), async
   const day = db.prepare("SELECT tokens FROM usage WHERE user_id=? AND day=?").get(job.user_id, today())?.tokens || 0;
   if (job.tokens_used + maxOut > C.tokensPerJob) return res.status(429).json({ error: "budget de tokens de la tâche épuisé" });
   if (day + maxOut > C.tokensPerDay) return res.status(429).json({ error: "budget de tokens du jour épuisé" });
+  if (monthSpend(job.user_id) >= capMicro(job.tier)) return res.status(429).json({ error: "budget du mois épuisé" });
   try {
     const r = await fetch(`${C.llmBase}/chat/completions`, {
       method: "POST",
@@ -518,19 +565,62 @@ app.post("/internal/llm/chat/completions", express.json({ limit: "4mb" }), async
         temperature: 0.2,
         max_tokens: maxOut,
         stream: false,
+        ...(C.llmBase.includes("openrouter.ai") ? { usage: { include: true } } : {}),
       }),
       signal: AbortSignal.timeout(120000),
     });
     const data = await r.json().catch(() => ({}));
     const used = Number(data.usage?.total_tokens) || Math.ceil(JSON.stringify(req.body.messages || []).length / 3) + maxOut;
-    db.transaction(() => {
-      db.prepare("UPDATE jobs SET tokens_used=tokens_used+? WHERE id=?").run(used, job.id);
-      db.prepare("INSERT INTO usage (user_id,day,tokens) VALUES (?,?,?) ON CONFLICT(user_id,day) DO UPDATE SET tokens=tokens+?").run(job.user_id, today(), used, used);
-    })();
+    record(job, used, costMicro(data.usage, C.priceIn, C.priceOut, used), false);
     res.status(r.status).json(data);
   } catch (err) {
     console.error("llm:", err.message);
     res.status(502).json({ error: "erreur du fournisseur LLM" });
+  }
+});
+
+// Soleil : le modèle de travail, bloqué, demande des instructions à un modèle plus fort (peu de consultations,
+// messages courts, dépense comptée dans le budget du mois).
+const EXPERT_SYSTEM =
+  "Tu es un ingénieur senior qui conseille un autre agent de code, moins fort, bloqué sur une erreur. Réponds en français par six instructions numérotées au plus, courtes et précises : cause probable, fichier et ligne, modification exacte à faire (extrait avant puis après), puis comment vérifier. N'écris jamais un fichier entier. Pas d'introduction.";
+app.post("/internal/llm/expert", express.json({ limit: "256kb" }), async (req, res) => {
+  const job = jobFromReq(req);
+  if (!job) return res.status(401).json({ error: "jeton invalide" });
+  if (!(job.status === "queued" || job.status === "running")) return res.status(409).json({ error: "tâche terminée" });
+  if (tierOf(job.tier) !== "soleil") return res.status(403).json({ error: "expert indisponible avec ce modèle" });
+  if (job.expert_calls >= C.expertMaxPerJob) return res.status(429).json({ error: "nombre maximum de consultations de l'expert atteint pour cette tâche" });
+  if (monthSpend(job.user_id) >= capMicro(job.tier)) return res.status(429).json({ error: "budget du mois épuisé" });
+  const question = String(req.body?.question || "").slice(0, 4000);
+  const context = String(req.body?.context || "").slice(0, 9000);
+  if (!question) return res.status(400).json({ error: "question vide" });
+  try {
+    const r = await fetch(`${C.expertBase}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${C.expertKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: C.expertModel,
+        messages: [
+          { role: "system", content: EXPERT_SYSTEM },
+          { role: "user", content: `${question}\n\n${context}` },
+        ],
+        temperature: 0.2,
+        max_tokens: 1200,
+        stream: false,
+        ...(C.expertBase.includes("openrouter.ai") ? { usage: { include: true } } : {}),
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+    const data = await r.json().catch(() => ({}));
+    const advice = String(data.choices?.[0]?.message?.content || "").trim();
+    if (data.usage) {
+      const used = Number(data.usage.total_tokens) || 0;
+      record(job, used, costMicro(data.usage, C.expertPriceIn, C.expertPriceOut, used), true);
+    }
+    if (!r.ok || !advice) return res.status(502).json({ error: "l'expert n'a pas répondu" });
+    res.json({ advice: advice.slice(0, 4000) });
+  } catch (err) {
+    console.error("expert:", err.message);
+    res.status(502).json({ error: "erreur du fournisseur de l'expert" });
   }
 });
 
