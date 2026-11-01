@@ -73,7 +73,7 @@ async function authenticate(config: FullConfig, user: User) {
       if (await registrationErrorIsVisible(page)) {
         console.log('🤖: 🚨  user already exists');
         await cleanupUser(user);
-        await page.goto(baseURL, { timeout });
+        await page.goto(appURL(baseURL, 'register'), { timeout });
         await register(page, user);
         await page.waitForURL(conversationURL, { timeout });
       } else {
