@@ -87,6 +87,7 @@ endpoints:
 # Si le chat affiche « The agent is configured to use MCP tools, but none are available », c'est que
 # sandbox ne se connecte pas : retirer mcpServers ci-dessous et vérifier les logs de jeremy-sbx-orch.
 # Le bouton + (menu des serveurs MCP) reste visible : les autres serveurs y restent accessibles.
+# Aube utilise le terminal « sandbox » (DeepSeek seul) ; Soleil utilise « sandbox-soleil » (DeepSeek + expert Claude).
 modelSpecs:
   enforce: true
   prioritize: true
@@ -102,7 +103,7 @@ modelSpecs:
     - name: "soleil"
       label: "Soleil"
       iconURL: "/assets/jeremy-logo.svg"
-      mcpServers: ["sandbox"]
+      mcpServers: ["sandbox-soleil"]
       preset:
         endpoint: "Modèles"
         model: "Soleil"
@@ -155,10 +156,23 @@ mcpServers:
   # Secret Fly : ORCHESTRATOR_SECRET. SANDBOX_MCP_URL sert aussi au panneau de suivi.
   sandbox:
     type: streamable-http
-    url: ${SANDBOX_MCP_URL}
+    url: ${SANDBOX_MCP_URL}?tier=aube
     chatMenu: false
     headers:
       Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
       X-User-Id: "{{LIBRECHAT_USER_ID}}"
     timeout: 200000
-    serverInstructions: "Pour toute tâche de code, de projet ou de déploiement : si l'utilisateur ne donne pas le nom exact du dépôt (proprietaire/nom), appelle d'abord find_repos avec les mots qu'il a écrits, puis propose-lui les dépôts trouvés en une phrase courte (« Tu parles de X ? ») et attends son oui avant d'appeler run_task. S'il donne le nom exact, appelle run_task directement. Appelle run_task une seule fois (jamais deux fois pour la même demande). Dès qu'il rend un job_id, un panneau de suivi en direct s'affiche tout seul sous ton message : il montre les étapes et les erreurs, donc tu ne les écris pas. Écris seulement une phrase courte : « Travail en cours, patiente un peu, je te fais le retour dès que c'est fini. », puis appelle get_job avec wait_seconds=150, en boucle et SANS écrire de texte entre les appels, tant que le statut est running. Ne demande jamais à l'utilisateur de redemander le statut : tu attends la fin toi-même. Quand le statut est success ou failed, donne le résultat en quelques phrases : ce qui est corrigé, ce qui reste à faire, le lien de la pull request, ou la raison de l'échec telle qu'elle est dans summary. Si un outil répond que GitHub n'est pas connecté, propose les deux choix indiqués par l'outil (lien de connexion tel quel, ou token GitHub envoyé dans le chat). Si la tâche demande Vercel, Cloudflare, Render ou Fly.io, dis à l'utilisateur de générer sa clé sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre de run_task correspondant. Ne demande jamais une clé dont la tâche n'a pas besoin."
+    serverInstructions: &sbxInstructions "Pour toute tâche de code, de projet ou de déploiement : si l'utilisateur ne donne pas le nom exact du dépôt (proprietaire/nom), appelle d'abord find_repos avec les mots qu'il a écrits, puis propose-lui les dépôts trouvés en une phrase courte (« Tu parles de X ? ») et attends son oui avant d'appeler run_task. S'il donne le nom exact, appelle run_task directement. Appelle run_task une seule fois (jamais deux fois pour la même demande). Dès qu'il rend un job_id, un panneau de suivi en direct s'affiche tout seul sous ton message : il montre les étapes et les erreurs, donc tu ne les écris pas. Écris seulement une phrase courte : « Travail en cours, patiente un peu, je te fais le retour dès que c'est fini. », puis appelle get_job avec wait_seconds=150, en boucle et SANS écrire de texte entre les appels, tant que le statut est running. Ne demande jamais à l'utilisateur de redemander le statut : tu attends la fin toi-même. Quand le statut est success ou failed, donne le résultat en quelques phrases : ce qui est corrigé, ce qui reste à faire, le lien de la pull request, ou la raison de l'échec telle qu'elle est dans summary. Si un outil répond que GitHub n'est pas connecté, propose les deux choix indiqués par l'outil (lien de connexion tel quel, ou token GitHub envoyé dans le chat). Si la tâche demande Vercel, Cloudflare, Render ou Fly.io, dis à l'utilisateur de générer sa clé sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre de run_task correspondant. Ne demande jamais une clé dont la tâche n'a pas besoin."
+
+  # Même terminal, mais pour Soleil : ?tier=soleil active l'expert (un modèle fort, Claude, donne des
+  # instructions quand le modèle de travail est bloqué) et le plafond de dépense mensuel de Soleil.
+  # Aube utilise « sandbox » (?tier=aube), sans expert.
+  sandbox-soleil:
+    type: streamable-http
+    url: ${SANDBOX_MCP_URL}?tier=soleil
+    chatMenu: false
+    headers:
+      Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
+      X-User-Id: "{{LIBRECHAT_USER_ID}}"
+    timeout: 200000
+    serverInstructions: *sbxInstructions
