@@ -76,13 +76,47 @@ const sh = (command, timeout = 120000) => {
   return { code: r.status ?? "timeout", out: `${r.stdout || ""}${r.stderr || ""}` };
 };
 
-// Démarrage de l'application : 12 s maximum. Code 124 (délai écoulé) = elle tournait encore = bon, sauf erreur fatale dans sa sortie.
-const SMOKE = `{ L=$(mktemp); PORT=3000 timeout -k 2 12 npm start > "$L" 2>&1; c=$?; echo "--- démarrage de l'application (npm start) ---"; tail -c 2500 "$L"; if [ $c -eq 124 ]; then ! grep -Eq 'EADDRINUSE|Cannot find module|ERR_MODULE_NOT_FOUND|SyntaxError|ReferenceError|UnhandledPromiseRejection|Error: listen|TypeError' "$L"; exit $?; fi; exit $c; }`;
+// Démarrage de l'application (16 s au plus) : le terminal lance « npm start », cherche la page sur les ports usuels,
+// vérifie le code HTTP, ouvre la page dans un vrai navigateur (chromium headless) et relève les erreurs de la console.
+// Échec = plantage au démarrage, erreur fatale dans le journal, HTTP 5xx ou erreur JavaScript dans la page.
+// Une application qui reste lancée sans page (bot, worker) est acceptée.
+const SMOKE = "{\n" + String.raw`L=$(mktemp); D=$(mktemp); K=$(mktemp); H=""
+PORT=3000 timeout -k 2 16 npm start > "$L" 2>&1 &
+P=$!
+URL=""
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  sleep 1
+  kill -0 $P 2>/dev/null || break
+  for p in 3000 8080 5173 4173 8000; do
+    if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$p/"; then URL="http://127.0.0.1:$p/"; break 2; fi
+  done
+done
+if [ -n "$URL" ]; then
+  H=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$URL")
+  echo "--- page $URL : code HTTP $H ---"
+  C=$(command -v chromium || command -v chromium-browser)
+  if [ -n "$C" ]; then
+    timeout 25 "$C" --headless --no-sandbox --disable-gpu --disable-dev-shm-usage --enable-logging=stderr --v=0 --virtual-time-budget=5000 --dump-dom "$URL" > "$D" 2> "$K"
+    echo "--- navigateur : page de $(wc -c < "$D") octets, erreurs de la console : ---"
+    grep 'CONSOLE' "$K" | head -5 | cut -c1-300
+  fi
+  kill $P 2>/dev/null; wait $P 2>/dev/null; c=124
+else
+  wait $P; c=$?
+fi
+echo "--- démarrage de l'application (npm start) ---"
+tail -c 2000 "$L"
+bad=0
+case "$H" in 5*) bad=1;; esac
+grep -Eq 'CONSOLE.*(Uncaught|Error)' "$K" && bad=1
+if [ $c -eq 124 ]; then grep -Eq 'EADDRINUSE|Cannot find module|ERR_MODULE_NOT_FOUND|SyntaxError|ReferenceError|UnhandledPromiseRejection|Error: listen|TypeError' "$L" && bad=1; exit $bad; fi
+exit $c` + "\n}";
 
 // Vérification du projet (test ou build). Le terminal la relance LUI-MÊME après chaque fichier modifié :
 // l'IA ne la relance pas et reçoit l'erreur exacte telle quelle.
 // failedAtStart : la vérification échouait au départ (sinon rien à réparer, pas de fin automatique).
 let CHECK = null;
+let PLAN = [];
 
 // Vérifications automatiques : l'IA part des ERREURS, elle ne lit pas tout le projet.
 function autoChecks() {
@@ -94,8 +128,7 @@ function autoChecks() {
     if (inst.code !== 0) return `installation npm échouée (code ${inst.code}) :\n${tail(inst.out)}`;
     const cmd = scripts.test && !/no test specified/.test(scripts.test) ? "npm test" : scripts.build ? "npm run build" : null;
     if (!cmd && !scripts.start) return "Aucun script de test, de build ou de démarrage.";
-    // Démarrage de l'application : si le test ou le build passe, le terminal lance « npm start » 12 s.
-    // Elle tient 12 s sans erreur fatale = bon ; elle plante ou affiche une erreur fatale = erreur donnée à l'IA.
+    // Démarrage de l'application (voir SMOKE) : lancée après le test ou le build, page ouverte dans un navigateur.
     const parts = [];
     if (cmd) parts.push(`${cmd} 2>&1`);
     if (scripts.start) {
@@ -193,6 +226,22 @@ const tools = {
     fs.writeFileSync(full, src.replace(old_str, () => String(new_str ?? "")));
     return `modifié : ${p}`;
   },
+  // Plan : quelques étapes courtes, affichées à l'utilisateur et rappelées après chaque vérification.
+  plan({ steps }) {
+    if (!Array.isArray(steps) || !steps.length) throw new Error("steps doit être une liste d'étapes");
+    PLAN = steps.slice(0, 8).map((x) => String(x).slice(0, 100));
+    progress("Plan : " + PLAN.map((x, i) => `${i + 1}. ${x}`).join(" | "));
+    return "plan enregistré";
+  },
+  // Vérification à la demande (nouveau projet) : installation, test ou build, démarrage et page dans un navigateur.
+  verify() {
+    progress("Vérification : installation, build, démarrage, page");
+    if (CHECK) {
+      const r = sh(CHECK.command, 280000);
+      return trunc(scrub(`${CHECK.label} -> code ${r.code}\n${tail(r.out)}`));
+    }
+    return trunc(scrub(autoChecks()));
+  },
   run({ command }) {
     const r = sh(command);
     progress(`commande terminée (code ${r.code})`);
@@ -207,12 +256,14 @@ const toolDefs = [
   T("search_code", "Cherche une expression régulière dans les fichiers du projet (40 lignes max). À utiliser pour trouver où une fonction, une variable ou un message est défini ou utilisé, au lieu de lire des fichiers entiers.", { pattern: { type: "string" }, dir: { type: "string" } }, ["pattern"]),
   T("edit_file", "Modifie un fichier EXISTANT : remplace un court extrait exact (old_str, unique dans le fichier) par new_str. À utiliser pour toute correction. Le terminal relance ensuite la vérification tout seul et te donne le résultat.", { path: { type: "string" }, old_str: { type: "string" }, new_str: { type: "string" } }, ["path", "old_str", "new_str"]),
   T("write_file", "Crée un NOUVEAU fichier avec son contenu complet. Ne l'utilise pas pour modifier un fichier existant (utilise edit_file). Le terminal relance ensuite la vérification tout seul.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"]),
+  T("plan", "Enregistre ton plan : 3 à 6 étapes courtes, dans l'ordre. À faire en premier pour un nouveau projet ou une tâche de plusieurs fichiers.", { steps: { type: "array", items: { type: "string" } } }, ["steps"]),
+  T("verify", "Lance maintenant la vérification complète du projet : installation, test ou build, démarrage de l'application et ouverture de la page dans un navigateur. À appeler quand les fichiers du projet sont écrits. Ensuite le terminal la relance tout seul après chaque fichier modifié.", {}, []),
   T("run", "Exécute une commande shell dans le projet (120 s max) : vercel, wrangler, fly, curl, ou toute autre commande utile. Inutile pour relancer le test ou le build : le terminal le fait seul.", { command: { type: "string" } }, ["command"]),
   T("note", "Écrit une courte ligne visible par l'utilisateur dans le suivi (ex. « Erreur 1 corrigée : ... », « Je passe à l'erreur 2 »).", { text: { type: "string" } }, ["text"]),
   T("finish", "Termine la tâche avec un court résumé en deux parties : Corrigé et Reste à faire.", { summary: { type: "string" } }, ["summary"]),
 ];
 
-const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Les extraits des fichiers cités par l'erreur te sont déjà donnés : ne les relis pas. Pour trouver où quelque chose est défini ou utilisé, utilise search_code plutôt que de lire des fichiers entiers. Pour modifier un fichier existant, utilise edit_file (remplace un court extrait exact) ; write_file sert seulement à créer un nouveau fichier. Ne réécris jamais un fichier entier pour changer quelques lignes. Après chaque fichier modifié, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. La vérification comprend aussi le démarrage de l'application (npm start, 12 s) : si elle plante au démarrage, tu reçois l'erreur de démarrage. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
+const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Les extraits des fichiers cités par l'erreur te sont déjà donnés : ne les relis pas. Pour trouver où quelque chose est défini ou utilisé, utilise search_code plutôt que de lire des fichiers entiers. Pour modifier un fichier existant, utilise edit_file (remplace un court extrait exact) ; write_file sert seulement à créer un nouveau fichier. Ne réécris jamais un fichier entier pour changer quelques lignes. Après chaque fichier modifié, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. La vérification comprend aussi le démarrage de l'application (npm start, page ouverte dans un navigateur) : si elle plante au démarrage, tu reçois l'erreur de démarrage. La page de l'application est aussi ouverte dans un navigateur : une erreur JavaScript ou un code HTTP 500 te sera signalé. Pour un nouveau projet ou une tâche de plusieurs fichiers : commence par l'outil plan (3 à 6 étapes courtes), réalise-les dans l'ordre, et quand les fichiers sont écrits appelle verify puis corrige ce qu'il signale. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
 
 // Historique allégé : tout ce qui est plus ancien que les 6 derniers messages est réduit à quelques mots
 // (sorties d'outils, contenus des fichiers écrits, rapports de vérification). Les 2 premiers messages
@@ -326,7 +377,7 @@ async function agent(first) {
       const hint = same >= 2 ? "\nATTENTION : l'erreur est identique après plusieurs corrections, tes modifications ne la changent pas. Relis le fichier autour de la ligne en erreur avec read_file, cherche la vraie cause avec search_code, et change d'approche." : "";
       messages.push({
         role: "user",
-        content: `Vérification automatique relancée par le terminal : ${CHECK.label} -> code ${r.code}\n${tail(scrub(r.out))}\n${r.code === 0 ? "La vérification passe. Termine la tâche demandée puis appelle finish." : "Corrige l'erreur suivante, une seule à la fois."}${hint}`,
+        content: `Vérification automatique relancée par le terminal : ${CHECK.label} -> code ${r.code}\n${tail(scrub(r.out))}\n${r.code === 0 ? "La vérification passe. Termine la tâche demandée puis appelle finish." : "Corrige l'erreur suivante, une seule à la fois."}${hint}${PLAN.length ? "\nRappel du plan : " + PLAN.map((x, i) => `${i + 1}. ${x}`).join(" | ") : ""}`,
       });
     }
   }
