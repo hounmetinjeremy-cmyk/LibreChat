@@ -1,6 +1,6 @@
 FROM node:22-slim
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates bash curl jq unzip python3 python3-pip \
+  && apt-get install -y --no-install-recommends git ca-certificates bash curl jq unzip python3 python3-pip chromium fonts-liberation \
   && rm -rf /var/lib/apt/lists/*
 # Outils d'hébergeurs : Vercel, Cloudflare (wrangler), Fly. Render se pilote par son API avec curl.
 RUN npm install -g --no-audit --no-fund vercel wrangler \
