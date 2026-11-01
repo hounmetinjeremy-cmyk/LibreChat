@@ -29,12 +29,6 @@ async function registrationErrorIsVisible(page: Page) {
     .catch(() => false);
 }
 
-async function login(page: Page, user: User) {
-  await page.getByLabel('Email').fill(user.email);
-  await page.getByLabel('Password').fill(user.password);
-  await page.getByTestId('login-button').click();
-}
-
 function appURL(baseURL: string, pathname = '') {
   const normalizedBaseURL = baseURL.endsWith('/') ? baseURL : `${baseURL}/`;
   return new URL(pathname.replace(/^\/+/, ''), normalizedBaseURL).toString();
@@ -61,7 +55,6 @@ async function authenticate(config: FullConfig, user: User) {
       throw new Error('🤖: baseURL is not defined');
     }
     const conversationURL = appURL(baseURL, 'c/new');
-    const loginURL = appURL(baseURL, 'login');
 
     // Set localStorage before navigating to the page
     await page.context().addInitScript(() => {
@@ -69,7 +62,9 @@ async function authenticate(config: FullConfig, user: User) {
     });
     console.log('🤖: ✔️  localStorage: set Nav as Visible', storageState);
 
-    await page.goto(baseURL, { timeout });
+    // The current login page is Google-only and intentionally has no Sign up link.
+    // Registration remains available at its dedicated route for E2E-created users.
+    await page.goto(appURL(baseURL, 'register'), { timeout });
     await register(page, user);
     try {
       await page.waitForURL(conversationURL, { timeout });
@@ -87,10 +82,8 @@ async function authenticate(config: FullConfig, user: User) {
     }
     console.log('🤖: ✔️  user successfully registered');
 
-    await page.goto(loginURL, { timeout });
-    await login(page, user);
-    await page.waitForURL(conversationURL, { timeout });
-    console.log('🤖: ✔️  user successfully authenticated');
+    // Registration signs the user in and redirects to the conversation page.
+    // Do not revisit /login: this deployment uses Google-only login UI.
 
     await page.context().storageState({ path: storageState });
     console.log('🤖: ✔️  authentication state successfully saved in', storageState);
