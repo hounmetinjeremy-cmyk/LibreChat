@@ -14,6 +14,22 @@ const scrub = (s) => {
   return t;
 };
 const tail = (s, n = 2500) => (s.length > n ? "[...]" + s.slice(-n) : s);
+// Résumé d'une sortie de test, de build ou de démarrage : l'erreur principale (quelques lignes) au lieu de tout le
+// journal. Chaque token d'entrée est renvoyé à l'IA à chaque étape : un message court et précis la fait corriger
+// plus vite et sans tourner en rond. Si rien ne ressemble à une erreur, on garde la fin de la sortie.
+function digest(out, max = 1600) {
+  const clean = String(out).replace(/\x1b\[[0-9;]*m/g, "").replace(/\r/g, "");
+  const lines = clean.split("\n");
+  const strong = /(^|\s)(\w*Error|Error)\b.*:|Traceback \(most recent|^\s*(FAIL|●|✕|✗)\s|Cannot find module|Module not found|ERROR in|error TS\d+|npm ERR! (?!A complete log|code|path|errno)|ENOENT|EADDRINUSE|SyntaxError|is not defined|Unexpected token|HTTP 5\d\d|Console error|Erreur JavaScript/;
+  let i = lines.findIndex((l) => strong.test(l));
+  if (i < 0) i = lines.findIndex((l) => /\b(error|erreur|failed|échec)\b/i.test(l));
+  if (i < 0) return tail(clean.trim(), 1200);
+  const a = Math.max(0, i - 2);
+  const block = lines.slice(a, a + 18).filter((l) => l.trim()).map((l) => l.slice(0, 220)).join("\n");
+  const last = lines.filter((l) => l.trim()).slice(-3).map((l) => l.slice(0, 160)).join("\n");
+  const text = `ERREUR PRINCIPALE :\n${block}` + (last && !block.includes(last) ? `\n[fin de la sortie]\n${last}` : "");
+  return text.length > max ? text.slice(0, max) + "\n[...]" : text;
+}
 const trunc = (s, n = 3000) => (s.length > n ? s.slice(0, n / 2) + "\n...[tronqué]...\n" + s.slice(-n / 2) : s);
 
 async function api(p, opts = {}) {
@@ -143,13 +159,13 @@ function autoChecks() {
     const r = sh(command, 280000);
     CHECK = { label, command, failedAtStart: r.code !== 0 };
     LAST_OUT = r.out;
-    return `${label} -> code ${r.code}\n${tail(r.out)}`;
+    return `${label} -> code ${r.code}\n${r.code === 0 ? "tout passe" : digest(r.out)}`;
   }
   if (has("requirements.txt") || has("pyproject.toml")) {
     const r = sh("python3 -m pytest -x -q 2>&1", 240000);
     CHECK = { label: "pytest", command: "python3 -m pytest -x -q 2>&1", failedAtStart: r.code !== 0 };
     LAST_OUT = r.out;
-    return `pytest -> code ${r.code}\n${tail(r.out)}`;
+    return `pytest -> code ${r.code}\n${r.code === 0 ? "tout passe" : digest(r.out)}`;
   }
   return "Aucune vérification automatique détectée.";
 }
@@ -265,7 +281,8 @@ const tools = {
     progress("Vérification : installation, build, démarrage, page");
     if (CHECK) {
       const r = sh(CHECK.command, 280000);
-      return trunc(scrub(`${CHECK.label} -> code ${r.code}\n${tail(r.out)}`));
+      if (r.code !== 0) LAST_OUT = r.out;
+      return trunc(scrub(`${CHECK.label} -> code ${r.code}\n${r.code === 0 ? "tout passe" : digest(r.out) + freshExcerpt(r.out)}`));
     }
     return trunc(scrub(autoChecks()));
   },
@@ -292,7 +309,7 @@ const toolDefs = [
 ];
 
 const SOLEIL_NOTE = " Tu disposes aussi de l'outil ask_expert : si tu es bloqué après deux essais sur la même erreur, appelle-le (3 fois au plus) et applique ses instructions à la lettre avec edit_file. Ne l'appelle pas pour une erreur que tu peux régler toi-même.";
-const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Les extraits des fichiers cités par l'erreur te sont déjà donnés : ne les relis pas. Pour trouver où quelque chose est défini ou utilisé, utilise search_code plutôt que de lire des fichiers entiers. Pour modifier un fichier existant, utilise edit_file (remplace un court extrait exact) ; write_file sert seulement à créer un nouveau fichier. Ne réécris jamais un fichier entier pour changer quelques lignes. Après chaque fichier modifié, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. La vérification comprend aussi le démarrage de l'application (npm start, page ouverte dans un navigateur) : si elle plante au démarrage, tu reçois l'erreur de démarrage. La page de l'application est aussi ouverte dans un navigateur : une erreur JavaScript ou un code HTTP 500 te sera signalé. Pour un nouveau projet ou une tâche de plusieurs fichiers : commence par l'outil plan (3 à 6 étapes courtes), réalise-les dans l'ordre, et quand les fichiers sont écrits appelle verify puis corrige ce qu'il signale. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
+const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Les erreurs te sont données sous forme résumée (ERREUR PRINCIPALE) avec l'extrait à jour du fichier cité : ne le relis pas ; si le résumé ne suffit pas, utilise run avec une commande ciblée (grep, tail), jamais le journal entier. Pour trouver où quelque chose est défini ou utilisé, utilise search_code plutôt que de lire des fichiers entiers. Pour modifier un fichier existant, utilise edit_file (remplace un court extrait exact) ; write_file sert seulement à créer un nouveau fichier. Ne réécris jamais un fichier entier pour changer quelques lignes. Après chaque fichier modifié, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. La vérification comprend aussi le démarrage de l'application (npm start, page ouverte dans un navigateur) : si elle plante au démarrage, tu reçois l'erreur de démarrage. La page de l'application est aussi ouverte dans un navigateur : une erreur JavaScript ou un code HTTP 500 te sera signalé. Pour un nouveau projet ou une tâche de plusieurs fichiers : commence par l'outil plan (3 à 6 étapes courtes), réalise-les dans l'ordre, et quand les fichiers sont écrits appelle verify puis corrige ce qu'il signale. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
 
 // Historique allégé : tout ce qui est plus ancien que les 6 derniers messages est réduit à quelques mots
 // (sorties d'outils, contenus des fichiers écrits, rapports de vérification). Les 2 premiers messages
@@ -348,6 +365,16 @@ async function llm(body) {
       progress(`Limite de l'IA atteinte (${m[1]}), nouvelle tentative dans ${wait} s`);
       await new Promise((r) => setTimeout(r, wait * 1000));
     }
+  }
+}
+
+// Extrait à jour (après ta modification) du fichier cité par l'erreur : évite un read_file de plus.
+function freshExcerpt(out) {
+  try {
+    const t = errorContext(out, 1, 8);
+    return t ? "\nExtrait à jour du fichier cité :" + scrub(t) : "";
+  } catch {
+    return "";
   }
 }
 
@@ -431,7 +458,7 @@ async function agent(first) {
       const adviceText = advice ? `\nCONSEIL DE L'EXPERT (applique-le à la lettre avec edit_file) :\n${scrub(advice)}` : "";
       messages.push({
         role: "user",
-        content: `Vérification automatique relancée par le terminal : ${CHECK.label} -> code ${r.code}\n${tail(scrub(r.out))}\n${r.code === 0 ? "La vérification passe. Termine la tâche demandée puis appelle finish." : "Corrige l'erreur suivante, une seule à la fois."}${hint}${adviceText}${PLAN.length ? "\nRappel du plan : " + PLAN.map((x, i) => `${i + 1}. ${x}`).join(" | ") : ""}`,
+        content: `Vérification automatique relancée par le terminal : ${CHECK.label} -> code ${r.code}\n${r.code === 0 ? "tout passe" : scrub(digest(r.out)) + freshExcerpt(r.out)}\n${r.code === 0 ? "La vérification passe. Termine la tâche demandée puis appelle finish." : "Corrige l'erreur suivante, une seule à la fois."}${hint}${adviceText}${PLAN.length ? "\nRappel du plan : " + PLAN.map((x, i) => `${i + 1}. ${x}`).join(" | ") : ""}`,
       });
     }
   }
@@ -472,7 +499,7 @@ try {
   let excerpts = "";
   if (CHECK && CHECK.failedAtStart) {
     try {
-      excerpts = errorContext(checks);
+      excerpts = errorContext(LAST_OUT || checks);
     } catch {}
   }
   const first = `Dépôt : ${repo}\nTâche : ${job.instructions}\n\nFichiers (${files.length}) :\n${files.slice(0, 60).join("\n")}\n\nVérifications automatiques :\n${checks}${excerpts ? `\n\nExtraits des fichiers cités par l'erreur (déjà lus pour toi) :${excerpts}` : ""}\n\nRappel : corrige les erreurs une à la fois ; le terminal relance seul la vérification après chaque fichier écrit ; continue jusqu'à ce que tout passe.`;
