@@ -27,6 +27,7 @@ const C = {
   llmKey: need("LLM_API_KEY"),
   llmBase: (e.LLM_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, ""),
   llmModel: e.LLM_MODEL || "gemini-2.5-flash",
+  llmReasoning: e.LLM_REASONING_EFFORT || "", // "low" | "medium" | "high" | "none" : limite la réflexion du modèle (la sortie coûte cher)
   // Prix en dollars par million de tokens (sert à calculer la dépense quand le fournisseur ne donne pas le coût).
   priceIn: Number(e.PRICE_IN_PER_M || 0.04),
   priceOut: Number(e.PRICE_OUT_PER_M || 0.45),
@@ -566,10 +567,16 @@ app.post("/internal/llm/chat/completions", express.json({ limit: "4mb" }), async
         max_tokens: maxOut,
         stream: false,
         ...(C.llmBase.includes("openrouter.ai") ? { usage: { include: true } } : {}),
+        ...(C.llmBase.includes("openrouter.ai") && C.llmReasoning ? { reasoning: C.llmReasoning === "none" ? { enabled: false } : { effort: C.llmReasoning } } : {}),
       }),
       signal: AbortSignal.timeout(120000),
     });
     const data = await r.json().catch(() => ({}));
+    // Journal : où partent les tokens (entrée, cache, sortie, réflexion, coût) pour chaque requête. Voir `fly logs`.
+    try {
+      const u = data.usage || {};
+      console.log(`llm job=${job.id} tier=${job.tier} in=${u.prompt_tokens ?? "?"} cached=${u.prompt_tokens_details?.cached_tokens ?? 0} out=${u.completion_tokens ?? "?"} think=${u.completion_tokens_details?.reasoning_tokens ?? 0} cost=${u.cost ?? "?"} status=${r.status}`);
+    } catch {}
     const used = Number(data.usage?.total_tokens) || Math.ceil(JSON.stringify(req.body.messages || []).length / 3) + maxOut;
     record(job, used, costMicro(data.usage, C.priceIn, C.priceOut, used), false);
     res.status(r.status).json(data);
