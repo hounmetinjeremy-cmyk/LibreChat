@@ -30,6 +30,24 @@ function digest(out, max = 1600) {
   const text = `ERREUR PRINCIPALE :\n${block}` + (last && !block.includes(last) ? `\n[fin de la sortie]\n${last}` : "");
   return text.length > max ? text.slice(0, max) + "\n[...]" : text;
 }
+// Liste de fichiers compacte pour le premier message : tous les fichiers si le projet est petit, sinon les fichiers
+// de la racine et les dossiers avec leur nombre de fichiers (l'IA explore avec list_files ou search_code).
+function tree(files) {
+  if (files.length <= 40) return files.join("\n");
+  const top = [];
+  const dirs = new Map();
+  for (const f of files) {
+    const parts = f.split("/");
+    if (parts.length === 1) top.push(f);
+    else {
+      const d = parts.length > 2 ? parts.slice(0, 2).join("/") : parts[0];
+      dirs.set(d, (dirs.get(d) || 0) + 1);
+    }
+  }
+  const dl = [...dirs.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25).map(([d, n]) => `${d}/ (${n} fichiers)`);
+  const text = [...top.slice(0, 25), ...dl].join("\n") + `\n(${files.length} fichiers au total : list_files dir=... ou search_code pour aller plus loin)`;
+  return text.length > 1500 ? text.slice(0, 1500) + "\n[...]" : text;
+}
 const trunc = (s, n = 3000) => (s.length > n ? s.slice(0, n / 2) + "\n...[tronqué]...\n" + s.slice(-n / 2) : s);
 
 async function api(p, opts = {}) {
@@ -135,6 +153,8 @@ let CHECK = null;
 let PLAN = [];
 let TIER = "aube"; // « soleil » : un expert (modèle fort) peut conseiller l'agent quand il est bloqué
 let LAST_OUT = ""; // dernière sortie de vérification (donnée à l'expert)
+const TOUCHED = new Set(); // fichiers modifiés par l'agent (rappelés après chaque vérification)
+let FIRST_SHORT = ""; // version courte du premier message, utilisée une fois l'agent bien lancé
 const TRIED = []; // dernières actions de l'agent (données à l'expert)
 
 // Vérifications automatiques : l'IA part des ERREURS, elle ne lit pas tout le projet.
@@ -178,9 +198,9 @@ const safe = (p) => {
   return full;
 };
 
-// Extraits des fichiers cités par l'erreur de départ (2 fichiers, ~30 lignes chacun) : donnés à l'IA dès la
+// Extraits des fichiers cités par l'erreur de départ (2 fichiers, ~25 lignes chacun) : donnés à l'IA dès la
 // première étape, pour qu'elle n'ait pas à les demander (chaque aller-retour renvoie tout l'historique).
-function errorContext(out, maxFiles = 2, radius = 15) {
+function errorContext(out, maxFiles = 2, radius = 12) {
   const found = new Map();
   const re = /((?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|jsx|tsx|js|ts|py|json|css|html|vue|go|rb|php))(?:["']?[:(,]\s*(?:line\s*)?(\d+))?/g;
   let m;
@@ -202,7 +222,7 @@ function errorContext(out, maxFiles = 2, radius = 15) {
     const b = Math.min(lines.length, line + radius);
     text += `\n--- ${rel} (lignes ${a}-${b} sur ${lines.length}) ---\n` + lines.slice(a - 1, b).map((l, i) => `${a + i}: ${l.slice(0, 200)}`).join("\n");
   }
-  return text.length > 5000 ? text.slice(0, 5000) + "\n[...]" : text;
+  return text.length > 3500 ? text.slice(0, 3500) + "\n[...]" : text;
 }
 
 // Soleil : demande des instructions à l'expert (modèle fort). Il reçoit peu de texte : l'erreur, les extraits
@@ -233,17 +253,31 @@ const tools = {
     const files = git(["ls-files"]).split("\n").filter((f) => f && (!base || f.startsWith(base + "/") || f === base));
     return files.slice(0, 200).join("\n") + (files.length > 200 ? `\n... (${files.length} fichiers)` : "");
   },
-  read_file({ path: p, start = 1, end = 120 }) {
+  // Lecture par taille (environ 2800 caractères) : jamais coupée au milieu par le terminal, et le message dit
+  // où continuer.
+  read_file({ path: p, start, end }) {
     const lines = fs.readFileSync(safe(p), "utf8").split("\n");
-    const a = Math.max(start, 1);
-    const b = Math.min(end, a + 119, lines.length);
-    return lines.slice(a - 1, b).map((l, i) => `${a + i}: ${l}`).join("\n") + `\n[lignes ${a}-${b} sur ${lines.length}]`;
+    const a = Math.max(Number(start) || 1, 1);
+    if (a > lines.length) return `[le fichier a ${lines.length} lignes]`;
+    const hardEnd = Math.min(Number(end) || a + 79, a + 119, lines.length);
+    const out = [];
+    let size = 0;
+    let b = a - 1;
+    for (let i = a; i <= hardEnd; i++) {
+      const l = `${i}: ${lines[i - 1].slice(0, 300)}`;
+      if (size + l.length > 2800 && out.length) break;
+      out.push(l);
+      size += l.length + 1;
+      b = i;
+    }
+    return out.join("\n") + `\n[lignes ${a}-${b} sur ${lines.length}]` + (b < hardEnd ? ` (limite de taille : continue avec start=${b + 1})` : "");
   },
   write_file({ path: p, content }) {
     const full = safe(p);
     if (path.relative(ROOT, full).startsWith(".github")) throw new Error("modification de .github interdite");
     fs.mkdirSync(path.dirname(full), { recursive: true });
     fs.writeFileSync(full, content);
+    TOUCHED.add(p);
     return `écrit : ${p}`;
   },
   // Recherche dans le code suivi par git (expression régulière) : trouve où quelque chose est défini ou utilisé
@@ -267,6 +301,7 @@ const tools = {
     if (n === 0) throw new Error("old_str introuvable : relis le fichier avec read_file et recopie l'extrait exactement (espaces compris)");
     if (n > 1) throw new Error(`old_str apparaît ${n} fois : ajoute des lignes autour pour qu'il soit unique`);
     fs.writeFileSync(full, src.replace(old_str, () => String(new_str ?? "")));
+    TOUCHED.add(p);
     return `modifié : ${p}`;
   },
   // Plan : quelques étapes courtes, affichées à l'utilisateur et rappelées après chaque vérification.
@@ -289,27 +324,39 @@ const tools = {
   run({ command }) {
     const r = sh(command);
     progress(`commande terminée (code ${r.code})`);
-    return trunc(`code ${r.code}\n${r.out}`);
+    return trunc(`code ${r.code}\n${r.out}`, 2000);
   },
 };
 
 const T = (name, description, properties, required) => ({ type: "function", function: { name, description, parameters: { type: "object", properties, required } } });
 const toolDefs = [
-  T("list_files", "Liste les fichiers suivis par git (200 max).", { dir: { type: "string" } }, []),
-  T("read_file", "Lit un fichier, 120 lignes max par appel.", { path: { type: "string" }, start: { type: "integer" }, end: { type: "integer" } }, ["path"]),
-  T("search_code", "Cherche une expression régulière dans les fichiers du projet (40 lignes max). À utiliser pour trouver où une fonction, une variable ou un message est défini ou utilisé, au lieu de lire des fichiers entiers.", { pattern: { type: "string" }, dir: { type: "string" } }, ["pattern"]),
-  T("edit_file", "Modifie un fichier EXISTANT : remplace un court extrait exact (old_str, unique dans le fichier) par new_str. À utiliser pour toute correction. Le terminal relance ensuite la vérification tout seul et te donne le résultat.", { path: { type: "string" }, old_str: { type: "string" }, new_str: { type: "string" } }, ["path", "old_str", "new_str"]),
-  T("write_file", "Crée un NOUVEAU fichier avec son contenu complet. Ne l'utilise pas pour modifier un fichier existant (utilise edit_file). Le terminal relance ensuite la vérification tout seul.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"]),
-  T("plan", "Enregistre ton plan : 3 à 6 étapes courtes, dans l'ordre. À faire en premier pour un nouveau projet ou une tâche de plusieurs fichiers.", { steps: { type: "array", items: { type: "string" } } }, ["steps"]),
-  T("verify", "Lance maintenant la vérification complète du projet : installation, test ou build, démarrage de l'application et ouverture de la page dans un navigateur. À appeler quand les fichiers du projet sont écrits. Ensuite le terminal la relance tout seul après chaque fichier modifié.", {}, []),
-  T("ask_expert", "Demande des instructions précises à un expert (modèle plus fort). À utiliser seulement si tu es bloqué après deux essais sur la même erreur : 3 fois au plus par tâche. Décris le blocage en une ou deux phrases ; l'erreur et les extraits sont ajoutés automatiquement. Applique ensuite ses instructions avec edit_file.", { question: { type: "string" } }, ["question"]),
-  T("run", "Exécute une commande shell dans le projet (120 s max) : vercel, wrangler, fly, curl, ou toute autre commande utile. Inutile pour relancer le test ou le build : le terminal le fait seul.", { command: { type: "string" } }, ["command"]),
-  T("note", "Écrit une courte ligne visible par l'utilisateur dans le suivi (ex. « Erreur 1 corrigée : ... », « Je passe à l'erreur 2 »).", { text: { type: "string" } }, ["text"]),
-  T("finish", "Termine la tâche avec un court résumé en deux parties : Corrigé et Reste à faire.", { summary: { type: "string" } }, ["summary"]),
+  T("list_files", "Liste les fichiers git (200 max).", { dir: { type: "string" } }, []),
+  T("read_file", "Lit un fichier (environ 80 lignes ou 2800 caractères par appel). Donne start et end pour cibler.", { path: { type: "string" }, start: { type: "integer" }, end: { type: "integer" } }, ["path"]),
+  T("search_code", "Cherche une regex dans le projet (40 lignes max). Pour trouver où quelque chose est défini ou utilisé.", { pattern: { type: "string" }, dir: { type: "string" } }, ["pattern"]),
+  T("edit_file", "Modifie un fichier EXISTANT : remplace un court extrait exact (old_str, unique) par new_str. Le terminal relance ensuite la vérification.", { path: { type: "string" }, old_str: { type: "string" }, new_str: { type: "string" } }, ["path", "old_str", "new_str"]),
+  T("write_file", "Crée un NOUVEAU fichier (contenu complet). Pas pour modifier un fichier existant.", { path: { type: "string" }, content: { type: "string" } }, ["path", "content"]),
+  T("plan", "Enregistre ton plan : 3 à 6 étapes courtes. À faire d'abord pour un nouveau projet ou plusieurs fichiers.", { steps: { type: "array", items: { type: "string" } } }, ["steps"]),
+  T("verify", "Lance la vérification complète (installation, test ou build, démarrage, page dans un navigateur). À appeler quand les fichiers du projet sont écrits.", {}, []),
+  T("ask_expert", "Demande des instructions à un expert (modèle plus fort) si tu es bloqué après deux essais sur la même erreur : 3 fois au plus. Décris le blocage en une ou deux phrases ; l'erreur est ajoutée automatiquement. Applique ensuite ses instructions avec edit_file.", { question: { type: "string" } }, ["question"]),
+  T("run", "Commande shell dans le projet (120 s max) : vercel, wrangler, fly, curl, grep... Inutile pour relancer le test ou le build.", { command: { type: "string" } }, ["command"]),
+  T("note", "Courte ligne visible par l'utilisateur (ex. « Erreur 1 corrigée »).", { text: { type: "string" } }, ["text"]),
+  T("finish", "Termine avec un résumé : Corrigé et Reste à faire.", { summary: { type: "string" } }, ["summary"]),
 ];
 
 const SOLEIL_NOTE = " Tu disposes aussi de l'outil ask_expert : si tu es bloqué après deux essais sur la même erreur, appelle-le (3 fois au plus) et applique ses instructions à la lettre avec edit_file. Ne l'appelle pas pour une erreur que tu peux régler toi-même.";
-const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Les vérifications automatiques ont déjà été lancées : pars de leurs ERREURS, ne lis que les fichiers cités, ne lis jamais le projet entier. S'il y a plusieurs erreurs, corrige-les UNE À LA FOIS, dans l'ordre : une seule erreur par modification. Les erreurs te sont données sous forme résumée (ERREUR PRINCIPALE) avec l'extrait à jour du fichier cité : ne le relis pas ; si le résumé ne suffit pas, utilise run avec une commande ciblée (grep, tail), jamais le journal entier. Pour trouver où quelque chose est défini ou utilisé, utilise search_code plutôt que de lire des fichiers entiers. Pour modifier un fichier existant, utilise edit_file (remplace un court extrait exact) ; write_file sert seulement à créer un nouveau fichier. Ne réécris jamais un fichier entier pour changer quelques lignes. Après chaque fichier modifié, le terminal relance LUI-MÊME la vérification (test ou build) et te renvoie le résultat exact : ne relance pas toi-même le test ou le build, lis simplement ce résultat. La vérification comprend aussi le démarrage de l'application (npm start, page ouverte dans un navigateur) : si elle plante au démarrage, tu reçois l'erreur de démarrage. La page de l'application est aussi ouverte dans un navigateur : une erreur JavaScript ou un code HTTP 500 te sera signalé. Pour un nouveau projet ou une tâche de plusieurs fichiers : commence par l'outil plan (3 à 6 étapes courtes), réalise-les dans l'ordre, et quand les fichiers sont écrits appelle verify puis corrige ce qu'il signale. Quand la vérification passe, la tâche se termine toute seule. Note chaque erreur réglée avec l'outil note. Si une correction ne règle pas l'erreur, ne renonce pas : relis la sortie d'erreur et essaie une autre approche. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches différentes ont échoué (explique alors précisément ce qui bloque). Le résumé de finish a deux parties : « Corrigé : ... » (les erreurs réglées) et « Reste à faire : ... » (ce qui bloque, ou « rien »). Pour un déploiement, utilise les outils en ligne de commande (vercel, wrangler, fly) ou curl vers l'API de l'hébergeur ; les clés nécessaires sont déjà dans l'environnement de run. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement. Réponds uniquement par des appels d'outils.`;
+const SYSTEM = `Tu es un agent de développement dans un conteneur Linux jetable, avec un projet git cloné. Travaille dans l'ordre et sans gaspiller de tokens : chaque appel renvoie tout l'historique, donc moins d'étapes = moins cher.
+1. Pars des ERREURS des vérifications automatiques (résumé ERREUR PRINCIPALE et extrait du fichier cité, déjà lu pour toi : ne le relis pas). Ne lis jamais le projet entier.
+2. Plusieurs erreurs : une à la fois, dans l'ordre, une modification par erreur.
+3. Regroupe : si plusieurs actions sont indépendantes (lire deux fichiers, chercher deux choses), fais-les dans la MÊME étape avec plusieurs appels d'outils.
+4. Pour trouver une définition ou un usage : search_code, pas des fichiers entiers. Pour lire : read_file avec start et end ciblés.
+5. Modifier un fichier existant : edit_file (extrait exact et court). write_file sert seulement à créer un nouveau fichier. Ne réécris jamais un fichier entier pour quelques lignes.
+6. Après chaque fichier modifié, le terminal relance LUI-MÊME la vérification (test ou build, démarrage de l'application, page ouverte dans un navigateur : erreur JavaScript, HTTP 500) et te donne le résultat. Ne la relance pas toi-même.
+7. Si le résumé de l'erreur ne suffit pas, utilise run avec une commande ciblée (grep, tail), jamais le journal entier.
+8. Nouveau projet ou plusieurs fichiers : plan d'abord (3 à 6 étapes), écris les fichiers dans l'ordre, appelle verify, puis corrige ce qu'il signale.
+9. Note chaque erreur réglée avec note. Si une correction ne règle pas l'erreur, change d'approche, ne répète jamais la même.
+10. Quand la vérification passe, la tâche se termine toute seule. N'appelle finish que si aucune vérification n'existe ou si plusieurs approches ont échoué : « Corrigé : ... » et « Reste à faire : ... » (ou « rien »).
+11. Déploiement : vercel, wrangler, fly ou curl via run ; les clés sont déjà dans l'environnement. Ne touche pas aux fichiers de CI. N'affiche jamais de variables d'environnement.
+Réponds uniquement par des appels d'outils, sans texte.`;
 
 // Historique allégé : tout ce qui est plus ancien que les 6 derniers messages est réduit à quelques mots
 // (sorties d'outils, contenus des fichiers écrits, rapports de vérification). Les 2 premiers messages
@@ -332,6 +379,9 @@ const shrinkArgs = (c) => {
 // La limite avance par paquets de 4 messages (pas d'un message à la fois) : entre deux paliers, le début de
 // l'historique reste identique d'une étape à l'autre, donc le cache du fournisseur (moins cher) peut servir.
 const compact = (m) => {
+  // Le premier message (liste de fichiers, extraits, erreurs de départ) est renvoyé à chaque étape : une fois
+  // l'agent bien lancé (environ 5 étapes), il est remplacé une seule fois par une version courte.
+  if (FIRST_SHORT && m.length >= 12 && typeof m[1].content === "string") m = [m[0], { ...m[1], content: FIRST_SHORT }, ...m.slice(2)];
   const keepFrom = Math.max(2, m.length - KEEP_FULL - ((m.length - KEEP_FULL) % 4));
   return m.map((x, i) => {
     if (i < 2 || i >= keepFrom) return x;
@@ -387,7 +437,7 @@ async function agent(first) {
   // Garde-fou : même erreur après plusieurs corrections = l'IA tourne en rond (et brûle des tokens).
   let lastSig = "";
   let same = 0;
-  for (let step = 0; step < 40; step++) {
+  for (let step = 0; step < 30; step++) {
     const data = await llm({ messages: compact(messages), tools: toolList, tool_choice: "auto" });
     const msg = data.choices?.[0]?.message;
     if (!msg) throw new Error("réponse LLM vide");
@@ -440,7 +490,7 @@ async function agent(first) {
       const sig = r.code === 0 ? "" : tail(scrub(r.out), 600);
       same = sig && sig === lastSig ? same + 1 : 0;
       lastSig = sig;
-      if (same >= 4) {
+      if (same >= 3) {
         const done = notes.length ? notes.join(" ; ") : "rien";
         return `Corrigé : ${done}. Reste à faire : ${CHECK.label} échoue toujours avec la même erreur après ${same + 1} essais : ${sig.slice(-300)}`;
       }
@@ -458,7 +508,7 @@ async function agent(first) {
       const adviceText = advice ? `\nCONSEIL DE L'EXPERT (applique-le à la lettre avec edit_file) :\n${scrub(advice)}` : "";
       messages.push({
         role: "user",
-        content: `Vérification automatique relancée par le terminal : ${CHECK.label} -> code ${r.code}\n${r.code === 0 ? "tout passe" : scrub(digest(r.out)) + freshExcerpt(r.out)}\n${r.code === 0 ? "La vérification passe. Termine la tâche demandée puis appelle finish." : "Corrige l'erreur suivante, une seule à la fois."}${hint}${adviceText}${PLAN.length ? "\nRappel du plan : " + PLAN.map((x, i) => `${i + 1}. ${x}`).join(" | ") : ""}`,
+        content: `Vérification automatique relancée par le terminal : ${CHECK.label} -> code ${r.code}\n${r.code === 0 ? "tout passe" : scrub(digest(r.out)) + freshExcerpt(r.out)}\n${r.code === 0 ? "La vérification passe. Termine la tâche demandée puis appelle finish." : "Corrige l'erreur suivante, une seule à la fois."}${TOUCHED.size ? "\nFichiers modifiés jusqu'ici : " + [...TOUCHED].slice(-8).join(", ") : ""}${hint}${adviceText}${PLAN.length ? "\nRappel du plan : " + PLAN.map((x, i) => `${i + 1}. ${x}`).join(" | ") : ""}`,
       });
     }
   }
@@ -502,7 +552,8 @@ try {
       excerpts = errorContext(LAST_OUT || checks);
     } catch {}
   }
-  const first = `Dépôt : ${repo}\nTâche : ${job.instructions}\n\nFichiers (${files.length}) :\n${files.slice(0, 60).join("\n")}\n\nVérifications automatiques :\n${checks}${excerpts ? `\n\nExtraits des fichiers cités par l'erreur (déjà lus pour toi) :${excerpts}` : ""}\n\nRappel : corrige les erreurs une à la fois ; le terminal relance seul la vérification après chaque fichier écrit ; continue jusqu'à ce que tout passe.`;
+  const first = `Dépôt : ${repo}\nTâche : ${job.instructions}\n\nFichiers :\n${tree(files)}\n\nVérifications automatiques :\n${checks}${excerpts ? `\n\nExtraits des fichiers cités par l'erreur (déjà lus pour toi) :${excerpts}` : ""}`;
+  FIRST_SHORT = `Dépôt : ${repo}\nTâche : ${job.instructions}\n\nVérification de départ : ${checks.slice(0, 600)}\n(La liste des fichiers et les extraits de départ ne sont plus affichés : utilise list_files, search_code ou read_file ciblé au besoin.)`;
 
   const summary = await agent(first);
 
