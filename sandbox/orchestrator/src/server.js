@@ -83,6 +83,22 @@ const svcFromParams = (p) => {
   return o;
 };
 
+// Garde-fou contre les boucles de recherche : au plus 3 recherches de dépôts par utilisateur en 5 minutes.
+// Au-delà, l'outil refuse et dit à l'IA de demander le nom exact à l'utilisateur (c'est le serveur qui arrête,
+// pas la bonne volonté du modèle).
+const FIND_LOG = new Map();
+function findAllowed(userId) {
+  const now = Date.now();
+  const arr = (FIND_LOG.get(userId) || []).filter((t) => now - t < 300000);
+  if (arr.length >= 3) {
+    FIND_LOG.set(userId, arr);
+    return false;
+  }
+  arr.push(now);
+  FIND_LOG.set(userId, arr);
+  return true;
+}
+
 const tokenParam = (label) => z.string().min(8).max(500).regex(/^\S+$/).optional().describe(label);
 
 // ---------------------------------------------------------------- base de données
@@ -368,12 +384,13 @@ function buildServer(userId, ghHeader, svcHeaders, tier) {
     async ({ query, github_token }) => {
       const gh = await pickGithub(userId, github_token, ghHeader);
       if (!gh) return ko(githubMissing(userId, "find_repos"));
+      if (!findAllowed(userId)) return ko("Trop de recherches de dépôts d'affilée. Arrête de chercher : demande à l'utilisateur le nom exact (proprietaire/nom) et attends sa réponse.");
       try {
         const repos = await searchRepos(gh, query);
         if (!repos.length) {
           return ok(`Aucun dépôt ne ressemble à « ${query.slice(0, 100)} ». Demande à l'utilisateur de préciser le nom du projet.`);
         }
-        return ok(JSON.stringify(repos));
+        return ok(JSON.stringify(repos) + "\nPropose ces dépôts à l'utilisateur et attends son choix : ne relance pas find_repos et ne cite pas d'autres projets.");
       } catch (err) {
         console.error("find_repos:", err.message);
         return ko("Impossible de lire les dépôts GitHub pour le moment. Si l'utilisateur a envoyé un token, il est peut-être invalide ou sans accès à ses dépôts.");
