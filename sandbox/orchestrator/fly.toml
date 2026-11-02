@@ -49,6 +49,9 @@ primary_region = 'ams'
   # Bloc 2 (actif) : OpenRouter (clé « sk-or-v1-... »), DeepSeek Flash pour le travail
   LLM_BASE_URL = 'https://openrouter.ai/api/v1'
   LLM_MODEL = 'deepseek/deepseek-v4.1-flash'
+  # Réflexion du modèle limitée (la sortie coûte 14 fois plus que l'entrée). Valeurs : none, low, medium, high.
+  # Vider la valeur pour ne rien envoyer au fournisseur.
+  LLM_REASONING_EFFORT = 'low'
 
 [http_service]
   internal_port = 8080
