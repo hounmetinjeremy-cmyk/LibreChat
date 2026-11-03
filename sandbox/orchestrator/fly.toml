@@ -25,6 +25,17 @@ primary_region = 'ams'
   # Public : 7.5 (Aube, abonnement 15 $) et 15 (Soleil, abonnement 30 $), soit la moitié du prix.
   MONTHLY_SPEND_CAP_AUBE = '1000'
   MONTHLY_SPEND_CAP_SOLEIL = '1000'
+  # Solde unique par utilisateur (chat + serveurs MCP + terminal), en dollars par jour selon le plan.
+  # MODE TEST : plans non exigés et budgets très hauts. Valeurs publiques : REQUIRE_PLAN 'true',
+  # DAILY_BUDGET_FREE '0.02', DAILY_BUDGET_AUBE '0.25', DAILY_BUDGET_SOLEIL '0.5'.
+  REQUIRE_PLAN = 'false'
+  DAILY_BUDGET_FREE = '1000'
+  DAILY_BUDGET_AUBE = '1000'
+  DAILY_BUDGET_SOLEIL = '1000'
+  # Prix du modèle du chat (dollars par million de tokens) et coût moyen d'une tâche (affichage seulement).
+  CHAT_PRICE_IN_PER_M = '0.04'
+  CHAT_PRICE_OUT_PER_M = '0.45'
+  TASK_COST_ESTIMATE_USD = '0.05'
   # Prix en dollars par million de tokens (utilisés si le fournisseur ne donne pas le coût de l'appel).
   PRICE_IN_PER_M = '0.035'
   PRICE_OUT_PER_M = '0.50'
