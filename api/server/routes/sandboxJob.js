@@ -53,8 +53,18 @@ router.get('/quota', requireJwtAuth, async (req, res) => {
     const dataLine = raw.split('\n').find((l) => l.startsWith('data:'));
     const msg = JSON.parse(dataLine ? dataLine.slice(5).trim() : raw);
     const q = JSON.parse(msg?.result?.content?.[0]?.text || '{}');
+    const hasWallet = q.solde_jour_plafond_usd !== undefined;
+    const capUsd = Number(q.solde_jour_plafond_usd) || 0;
+    const remUsd = Math.max(0, Number(q.solde_jour_restant_usd) || 0);
+    // Solde unique (chat + serveurs MCP + terminal), en dollars ; l'interface le convertit en monnaie locale.
+    // Test : plafond énorme (1000 $) -> on affiche « illimité » côté interface (unlimited).
     const remaining = Math.max(0, Number(q.tokens_restants) || 0);
     const limit = Math.max(dailyLimit(), remaining);
+    const percent = hasWallet
+      ? capUsd > 0
+        ? Math.round((remUsd / capUsd) * 100)
+        : 0
+      : Math.round((remaining / limit) * 100);
     return res
       .status(200)
       .set({ 'Cache-Control': 'no-store' })
@@ -62,13 +72,49 @@ router.get('/quota', requireJwtAuth, async (req, res) => {
         remaining,
         limit,
         used: limit - remaining,
-        percent: Math.round((remaining / limit) * 100),
+        percent,
         jobs_remaining: Number(q.jobs_restants) || 0,
+        wallet: hasWallet,
+        remaining_usd: remUsd,
+        limit_usd: capUsd,
+        used_usd: Number(q.solde_jour_utilise_usd) || 0,
+        plan: q.plan || 'free',
+        tasks_estimate: Number(q.taches_estimees) || 0,
+        unlimited: capUsd >= 100,
+        terminal_ok: q.acces_ok !== false,
       });
   } catch (err) {
     logger.warn(`[sandbox-quota] lecture impossible : ${err?.message || 'erreur'}`);
     return res.status(502).json({ error: 'orchestrateur injoignable' });
   }
+});
+
+// Taux de change : 1 dollar = X unités. Mis en cache 12 h ; valeurs de secours si le service est indisponible.
+const XOF_PER_EUR = 655.957; // parité fixe officielle du franc CFA
+const FALLBACK = { USD: 1, EUR: 0.92, GBP: 0.79, CAD: 1.37, CHF: 0.88, MAD: 10, NGN: 1500, GHS: 15, BRL: 5.5 };
+let ratesCache = { at: 0, rates: { ...FALLBACK, XOF: FALLBACK.EUR * XOF_PER_EUR, XAF: FALLBACK.EUR * XOF_PER_EUR } };
+
+router.get('/rates', requireJwtAuth, async (_req, res) => {
+  if (Date.now() - ratesCache.at > 12 * 3600 * 1000) {
+    try {
+      const r = await fetch('https://open.er-api.com/v6/latest/USD', { signal: AbortSignal.timeout(5000) });
+      const j = await r.json();
+      if (j && j.rates && j.rates.EUR) {
+        const rates = { ...ratesCache.rates };
+        for (const k of Object.keys(FALLBACK)) {
+          if (Number(j.rates[k]) > 0) rates[k] = Number(j.rates[k]);
+        }
+        rates.XOF = rates.EUR * XOF_PER_EUR;
+        rates.XAF = rates.EUR * XOF_PER_EUR;
+        ratesCache = { at: Date.now(), rates };
+      } else {
+        ratesCache.at = Date.now() - 11 * 3600 * 1000; // on réessaie dans 1 h
+      }
+    } catch (e) {
+      ratesCache.at = Date.now() - 11 * 3600 * 1000;
+    }
+  }
+  res.set({ 'Cache-Control': 'public, max-age=3600' }).json({ base: 'USD', rates: ratesCache.rates });
 });
 
 router.get('/:id', requireJwtAuth, async (req, res) => {
