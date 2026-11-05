@@ -10,6 +10,7 @@ require('./patch-placeholder.js');
 require('./patch-github-link.js');
 require('./patch-sandbox-job.js');
 require('./patch-token-balance.js');
+require('./patch-agent-behavior.js');
 
 const fs = require('fs');
 
