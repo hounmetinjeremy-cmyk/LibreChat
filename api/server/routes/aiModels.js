@@ -1,6 +1,6 @@
 /**
  * Modèles « Aube » et « Soleil » réglés depuis la page admin (/admin-config).
- * - Pour chacun : fournisseur (DeepSeek ou Gemini), vrai modèle et clé, enregistrés chiffrés en base.
+ * - Pour chacun : fournisseur (DeepSeek, Gemini ou OpenRouter), vrai modèle et clé, enregistrés chiffrés en base.
  * - Route interne /ai-proxy/v1 : LibreChat l'appelle sur le serveur lui-même (127.0.0.1), elle lit
  *   la config, lit les images/PDF avec Gemini si besoin, puis transmet au bon fournisseur.
  * - Les utilisateurs ne voient que « Aube » et « Soleil », jamais le fournisseur ni la clé.
@@ -17,7 +17,14 @@ const LABELS = { aube: 'Aube', soleil: 'Soleil' };
 const PROVIDERS = {
   deepseek: 'https://api.deepseek.com/v1/chat/completions',
   gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+  openrouter: 'https://openrouter.ai/api/v1/chat/completions',
 };
+/**
+ * OpenRouter : on force l'hébergeur Relace (le moins cher en entrée) et on interdit le repli
+ * automatique sur un autre hébergeur. Pour autoriser un repli, ajouter un hébergeur dans `order`
+ * et passer allow_fallbacks à true.
+ */
+const OPENROUTER_ROUTING = { order: ['Relace'], allow_fallbacks: false };
 const DEFAULTS = {
   aube: { provider: 'deepseek', model: 'deepseek-v4-flash' },
   soleil: { provider: 'deepseek', model: 'deepseek-v4-pro' },
@@ -113,6 +120,7 @@ function fallbackKeys() {
   return {
     deepseek: real(pair[0]),
     gemini: real(process.env.GOOGLE_KEY) || real(pair[1]),
+    openrouter: real(process.env.OPENROUTER_API_KEY),
   };
 }
 
@@ -284,6 +292,9 @@ async function handleChat(req, res) {
         .json(err(`Modèle manquant pour « ${LABELS[role]} » : à renseigner dans la page admin « Clés API ».`));
     }
     body.model = target.model;
+    if (target.provider === 'openrouter') {
+      body.provider = OPENROUTER_ROUTING;
+    }
     body.messages = await convertMessages(body.messages, resolveVision(cfg));
 
     const ctrl = new AbortController();
