@@ -5,11 +5,13 @@
   ];
   var PROVIDERS = [
     { id: 'deepseek', label: 'DeepSeek' },
-    { id: 'gemini', label: 'Gemini (Google)' }
+    { id: 'gemini', label: 'Gemini (Google)' },
+    { id: 'openrouter', label: 'OpenRouter (Relace)' }
   ];
   var MODELS = {
     deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
-    gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']
+    gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'],
+    openrouter: ['deepseek/deepseek-v4.1-flash-1017', 'deepseek/deepseek-v4.1-flash']
   };
   var intro = document.getElementById('intro');
   var fieldsBox = document.getElementById('fields');
