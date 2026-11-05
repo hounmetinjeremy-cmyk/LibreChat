@@ -11,6 +11,7 @@ require('./patch-github-link.js');
 require('./patch-sandbox-job.js');
 require('./patch-token-balance.js');
 require('./patch-agent-behavior.js');
+require('./patch-jeremy-code.js');
 
 const fs = require('fs');
 
