@@ -1,0 +1,27 @@
+// --- Cloudflare : compte relié par l'utilisateur dans LibreChat (jeton chiffré côté LibreChat) ---
+const CF_DEPLOY_NOTE =
+  "\n\nDéploiement Cloudflare Pages (les clés sont déjà dans l’environnement, ne les affiche jamais) : construis le projet (npm run build), puis lance « npx wrangler pages deploy ./dist --project-name=NOM --branch=main --commit-dirty=true » en remplaçant ./dist par le vrai dossier de sortie (dist, build ou out) et NOM par le nom du projet (lettres minuscules, chiffres et tirets). Donne dans le résumé l’adresse https://NOM.pages.dev.";
+const CF_MISSING_NOTE =
+  "\n\nCloudflare n’est pas connecté pour cet utilisateur : si la tâche demande un déploiement sur Cloudflare, ne tente rien et termine avec finish : « Cloudflare non connecté : l’utilisateur doit connecter son compte Cloudflare avec le bouton prévu à cet effet. »";
+const CF_INVALID_NOTE =
+  "Le jeton Cloudflare de l’utilisateur est invalide ou révoqué : si un déploiement Cloudflare est prévu, écris une phrase courte puis affiche exactement ce lien Markdown : [Connecter Cloudflare](#cloudflare-connect). ";
+
+// Identifiants Cloudflare de l'utilisateur, déchiffrés côté LibreChat et remis une seule fois au conteneur
+// (variables CLOUDFLARE_API_TOKEN et CLOUDFLARE_ACCOUNT_ID). Le modèle ne les voit jamais.
+async function cloudflareEnv(userId) {
+  try {
+    const r = await fetch(`${C.libreUrl}/api/cloudflare-link/credentials?user=${encodeURIComponent(userId)}`, {
+      headers: { Authorization: `Bearer ${C.secret}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return d && d.reconnect ? { invalid: true } : null;
+    if (typeof d.token === "string" && d.token.length >= 20 && /^[a-f0-9]{32}$/i.test(String(d.account_id))) {
+      return { env: { CLOUDFLARE_API_TOKEN: d.token, CLOUDFLARE_ACCOUNT_ID: String(d.account_id) } };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+

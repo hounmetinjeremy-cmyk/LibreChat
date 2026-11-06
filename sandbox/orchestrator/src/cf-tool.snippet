@@ -1,0 +1,58 @@
+  s.tool(
+    "link_pages",
+    "Relie un dépôt GitHub de l’utilisateur à Cloudflare Pages : chaque push sur la branche principale republie le site automatiquement. À appeler après un run_task réussi qui a créé ou modifié un site. L’utilisateur n’a rien à fournir : Cloudflare doit seulement être connecté.",
+    {
+      repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).describe("Dépôt GitHub : propriétaire/nom"),
+      project_name: z.string().max(58).optional().describe("Nom du site (lettres minuscules, chiffres, tirets) ; par défaut le nom du dépôt"),
+      build_command: z.string().max(200).optional().describe("Commande de build, par défaut npm run build"),
+      output_dir: z.string().max(100).optional().describe("Dossier de sortie du build, par défaut dist"),
+    },
+    async ({ repo, project_name, build_command, output_dir }) => {
+      const [owner, name] = repo.split("/");
+      try {
+        const r = await fetch(`${C.libreUrl}/api/cloudflare-link/pages/project`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${C.secret}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user: userId,
+            owner,
+            repo: name,
+            name: project_name || name,
+            build_command: build_command || undefined,
+            destination_dir: output_dir || undefined,
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok) {
+          return ok(
+            JSON.stringify({
+              site: d.url,
+              projet: d.project,
+              republie_a_chaque_modification: d.auto_deploy_on_push !== false,
+              premier_build_lance: Boolean(d.first_build_started),
+              consigne: "Donne l’adresse du site en une phrase. Le premier build peut prendre une ou deux minutes.",
+            })
+          );
+        }
+        if (d.error === "cloudflare_not_connected" || d.reconnect) {
+          return ko(
+            "Cloudflare n’est pas connecté (ou le jeton n’est plus valide). Écris une phrase courte puis affiche exactement ce lien Markdown : [Connecter Cloudflare](#cloudflare-connect). Quand l’utilisateur a terminé, rappelle link_pages."
+          );
+        }
+        if (d.error === "github_app_missing") {
+          return ko(
+            `Cloudflare doit avoir accès au dépôt GitHub (une seule fois). Dis-le en une phrase et affiche ce lien tel quel : [Autoriser Cloudflare sur GitHub](${d.authorize_url || "https://dash.cloudflare.com"}). Quand c’est fait, rappelle link_pages.`
+          );
+        }
+        if (d.error === "rate_limited") {
+          return ko("Cloudflare demande de patienter un instant. Dis-le en une phrase et rappelle link_pages dans une minute.");
+        }
+        return ko(`Cloudflare : ${String(d.message || "erreur").slice(0, 300)}`);
+      } catch (err) {
+        console.error("link_pages:", err.message);
+        return ko("Cloudflare est injoignable pour le moment.");
+      }
+    }
+  );
+
