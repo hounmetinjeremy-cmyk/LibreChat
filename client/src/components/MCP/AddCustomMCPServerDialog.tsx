@@ -167,7 +167,18 @@ export default function AddCustomMCPServerDialog({
           <Button type="button" variant="outline" onClick={resetAndClose}>
             {localize('com_ui_cancel')}
           </Button>
-          <Button type="button" variant="submit" disabled={!canSubmit} onClick={handleSubmit}>
+          {/* Couleurs explicites : la variante « submit » du thème rendait ce bouton invisible. */}
+          <Button
+            type="button"
+            variant="default"
+            disabled={!canSubmit}
+            onClick={handleSubmit}
+            style={{
+              backgroundColor: '#16a34a',
+              color: '#ffffff',
+              opacity: canSubmit ? 1 : 0.5,
+            }}
+          >
             {isSubmitting ? '...' : 'Ajouter'}
           </Button>
         </OGDialogFooter>
