@@ -49,7 +49,7 @@ const compact = (text) => {
   flush();
   const full = lines.join("\n");
   if (full.length <= 6000) return full;
-  const bad = /error|erreur|failed|fatal|exception|traceback|cannot|not found|denied|ENOENT|EACCES|warn/i;
+  const bad = /error|erreur|ERR!|failed|fatal|exception|traceback|cannot|not found|denied|ENOENT|EACCES|warn/i;
   const head = lines.slice(0, 8);
   const tail = lines.slice(-20);
   const middle = lines.slice(8, -20);
