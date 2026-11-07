@@ -20,7 +20,8 @@ primary_region = 'ams'
   MAX_CONCURRENT_GLOBAL = '4'
   DAILY_JOBS_PER_USER = '1000'   # public : 50
   TOKENS_PER_JOB = '3000000'     # public : 1000000
-  TOKENS_PER_USER_DAY = '100000000' # public : 5000000
+  # Quota de tokens du chat par utilisateur et par jour (compté par LibreChat, voir src/patch-quota.js).
+  TOKENS_PER_USER_DAY = '3000000'
   # Dépense : plafond par utilisateur et par mois, en dollars, selon le modèle choisi (Aube ou Soleil).
   # Public : 7.5 (Aube, abonnement 15 $) et 15 (Soleil, abonnement 30 $), soit la moitié du prix.
   MONTHLY_SPEND_CAP_AUBE = '1000'
