@@ -8,7 +8,8 @@ import { filterOutput } from "./output-filter.js";
 // Annulation : dès que l'orchestrateur signale l'arrêt (clic sur Stop dans le chat), tout le groupe
 // de processus de la commande reçoit SIGTERM, puis SIGKILL 2 s plus tard.
 // Économie de tokens : la sortie passe par output-filter.js (bruit retiré, fiche courte en cas d'échec,
-// code affiché jamais réduit). Le journal complet de chaque commande reste dans /tmp/out-<id>.log.
+// code affiché jamais réduit). Le journal complet de chaque commande reste dans /tmp/out-<id>.log, recopié dans
+// /tmp/last.log quand la commande se termine (une commande qui lit last.log ne l'écrase pas).
 const { JOB_TOKEN, ORCHESTRATOR_URL, MAX_RUNTIME_SEC = "3600" } = process.env;
 const ROOT = process.env.WORK_ROOT || "/work";
 const HEAD = 2500;
@@ -134,7 +135,11 @@ function execCommand(c, env) {
         child.stderr.destroy();
       } catch {}
       try {
-        if (log) log.end();
+        if (log) {
+          log.end(() => {
+            if (!String(c.command).includes("last.log")) fs.copyFile(logPath, "/tmp/last.log", () => {});
+          });
+        }
       } catch {}
       let out;
       try {
