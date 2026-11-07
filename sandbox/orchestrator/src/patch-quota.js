@@ -3,8 +3,10 @@
 // sont comptés par LibreChat (route /ai-proxy) puis envoyés ici (POST /usage). L'orchestrateur les range par
 // utilisateur et par jour (table usage), répond au solde (GET /quota, outil my_quota) et refuse les commandes du
 // terminal quand le quota est épuisé.
-// Économie de tokens : la sortie d'une commande est limitée à 6 000 caractères (environ 1 500 tokens) au lieu de
-// 12 000, car chaque résultat est ensuite relu par l'IA du chat à chaque étape suivante.
+// Économie de tokens : chaque résultat de commande est relu par l'IA du chat à toutes les étapes suivantes.
+//  - les sorties courtes (jusqu'à 6 000 caractères) sont renvoyées entières, sans codes de couleur, sans barres de
+//    progression ni lignes répétées (ainsi cat d'un fichier reste lisible en entier) ;
+//  - les sorties longues sont résumées SANS IA et sans coût : début, lignes d'erreur, fin, et le nombre de lignes omises.
 // Idempotent. Si une ancre est introuvable, le build échoue volontairement (l'ancienne version reste en ligne).
 import fs from "node:fs";
 
@@ -15,6 +17,52 @@ if (src.includes("quotaInfo")) {
   console.log("patch-quota : déjà appliqué");
   process.exit(0);
 }
+
+const OK_LINE = 'const ok = (t) => ({ content: [{ type: "text", text: t }] });\n';
+
+const COMPACT = String.raw`// Résumé des sorties de commandes, sans IA et sans coût : retire les codes de couleur, les barres de progression
+// et les lignes répétées. Jusqu'à 6000 caractères, la sortie est renvoyée entière ; au-delà, on garde le début,
+// les lignes d'erreur et la fin, avec le nombre de lignes omises.
+const compact = (text) => {
+  const clean = String(text)
+    .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "")
+    .replace(/\r/g, "\n");
+  const lines = [];
+  let last = "";
+  let repeat = 0;
+  const flush = () => {
+    if (repeat > 0) lines.push("(ligne répétée " + repeat + " fois)");
+    repeat = 0;
+  };
+  for (const raw of clean.split("\n")) {
+    const l = raw.replace(/\s+$/, "");
+    if (!l.trim()) continue;
+    if (/^[\s\[\(#=>.\-|\\\/]{5,}\]?\s*\d*%?\s*$/.test(l) || /\d+%\s*[|\[#=]/.test(l)) continue;
+    if (l === last) {
+      repeat += 1;
+      continue;
+    }
+    flush();
+    lines.push(l);
+    last = l;
+  }
+  flush();
+  const full = lines.join("\n");
+  if (full.length <= 6000) return full;
+  const bad = /error|erreur|failed|fatal|exception|traceback|cannot|not found|denied|ENOENT|EACCES|warn/i;
+  const head = lines.slice(0, 8);
+  const tail = lines.slice(-20);
+  const middle = lines.slice(8, -20);
+  const important = middle.filter((l) => bad.test(l)).slice(0, 12);
+  const omitted = middle.length - important.length;
+  const out =
+    head.join("\n") +
+    "\n...[" + omitted + " lignes omises : utilise grep, head ou tail pour en voir plus]...\n" +
+    (important.length ? important.join("\n") + "\n...\n" : "") +
+    tail.join("\n");
+  return out.length > 4500 ? out.slice(0, 1500) + "\n...[tronqué]...\n" + out.slice(-3000) : out;
+};
+`;
 
 const edits = [
   [
@@ -35,6 +83,12 @@ const edits = [
       "  const used = dayTokens(userId);\n" +
       "  return { used, limit: C.tokensPerDay, remaining: Math.max(C.tokensPerDay - used, 0) };\n" +
       "};\n",
+  ],
+  ["résumé des sorties", OK_LINE, COMPACT + "\n" + OK_LINE],
+  [
+    "sortie résumée",
+    'const out = clip(scrubWith(sx.secrets, r.out || "")).trim();',
+    'const out = clip(compact(scrubWith(sx.secrets, r.out || ""))).trim();',
   ],
   [
     "refus du terminal",
@@ -68,7 +122,7 @@ const edits = [
       "// Arrêt explicite (en plus de l'annulation MCP) : tue la commande en cours de cet utilisateur.\n",
   ],
   [
-    "sortie des commandes",
+    "limite de sortie",
     "const clip = (t, n = 12000) =>",
     "const clip = (t, n = 6000) =>",
   ],
