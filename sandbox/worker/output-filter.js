@@ -1,9 +1,9 @@
 // Filtre des sorties du terminal (brique 1 du middleware d'économie de tokens).
 //
 // Rôle : ce que l'IA lit après une commande ne doit contenir ni barres de progression, ni warnings
-// secondaires, ni logs répétés. En cas d'échec, l'IA reçoit une fiche factuelle courte
-// (commande, fichier, ligne, motif exact). Le journal complet reste sur le disque du conteneur
-// (logPath) : l'IA peut le relire avec tail, grep ou cat si elle a besoin du détail.
+// secondaires, ni logs répétés. En cas d'échec, l'IA reçoit UNE ligne : fichier:ligne — erreur exacte.
+// Le journal complet reste sur le disque du conteneur (/tmp/last.log) : l'IA le relit avec tail, grep ou cat
+// seulement si cette ligne ne suffit pas.
 //
 // Règle absolue : une commande qui AFFICHE du contenu (cat, sed, head, git diff, grep...) n'est jamais
 // résumée ni dédoublonnée. Seuls les codes de couleur et les barres de progression sont retirés.
@@ -165,27 +165,36 @@ export function extractFailure(lines) {
   return { file: primary.file, reason: lines[primary.i], more: Math.max(0, reasons.size - 1) };
 }
 
-function buildFiche({ command, failure, timedOut, timeoutSec, signal, lines, logPath }) {
-  const out = [`Commande : ${short(command, 100)}`];
-  if (timedOut) {
-    out.push(`Motif : délai dépassé (${timeoutSec} s), processus tué`);
-  } else if (failure) {
-    if (failure.file) out.push(`Fichier : ${short(failure.file, 120)}`);
-    out.push(`Motif : ${short(failure.reason, 220)}`);
-    if (failure.more > 0) out.push(`Autres erreurs distinctes : ${failure.more}`);
-  } else {
-    if (signal) out.push(`Motif : arrêté par le signal ${signal}`);
-    if (lines.length) {
-      out.push('Dernières lignes :');
-      out.push(...lines.slice(-5).map((l) => short(l, 160)));
+/** Retire du motif le début « fichier:ligne:colonne » ou « fichier(ligne,colonne) » : il est déjà dans la fiche. */
+function stripLocation(reason, file) {
+  let r = String(reason).trim();
+  if (file) {
+    const path = file.replace(/:\d+(?::\d+)?$/, '');
+    const i = r.indexOf(path);
+    if (i >= 0 && i < 12) {
+      r = r.slice(i + path.length).replace(/^[:(]\d+(?:[:,]\d+)?\)?\s*[:-]?\s*/, '');
     }
   }
-  if (timedOut && !failure && lines.length) {
-    out.push('Dernières lignes :');
-    out.push(...lines.slice(-3).map((l) => short(l, 160)));
+  return r || String(reason).trim();
+}
+
+/**
+ * Fiche d'échec : UNE ligne « fichier:ligne — erreur exacte » (la commande est connue de l'IA qui l'a lancée).
+ * Le détail reste dans le journal complet, que l'IA relit seulement si cette ligne ne suffit pas.
+ */
+function buildFiche({ failure, timedOut, timeoutSec, signal, lines }) {
+  if (timedOut) {
+    return `Délai dépassé (${timeoutSec} s), processus tué.`;
   }
-  if (logPath) out.push(`Journal complet : ${logPath}`);
-  return out.join('\n');
+  if (failure) {
+    const file = failure.file ? failure.file.replace(/:(\d+):\d+$/, ':$1') : null;
+    const reason = short(stripLocation(failure.reason, failure.file), 220);
+    const more = failure.more > 0 ? ` (+${failure.more} autres erreurs)` : '';
+    return file ? `${short(file, 120)} — ${reason}${more}` : `${reason}${more}`;
+  }
+  const tail = lines.slice(-3).map((l) => short(l, 160));
+  if (signal) tail.unshift(`Arrêté par le signal ${signal}.`);
+  return tail.join('\n');
 }
 
 /**
@@ -213,18 +222,16 @@ export function filterOutput(o) {
 
   const failed = o.timedOut || (o.code !== 0 && o.code !== undefined) || Boolean(o.signal);
 
-  // 2) Échec : fiche factuelle courte.
+  // 2) Échec : fiche d'une ligne.
   if (failed) {
     const failure = extractFailure(lines);
     return {
       text: buildFiche({
-        command: o.command,
         failure,
         timedOut: o.timedOut,
         timeoutSec: o.timeoutSec,
         signal: o.signal,
         lines,
-        logPath: o.logPath,
       }),
       mode: 'echec',
     };
@@ -239,7 +246,7 @@ export function filterOutput(o) {
   }
   // La note n'apparaît que si une part notable de la sortie a disparu.
   if (o.logPath && cleaned.trim().length - text.length > 400) {
-    text += `\n(sortie réduite, journal complet : ${o.logPath})`;
+    text += `\n(sortie réduite, journal complet : /tmp/last.log)`;
   }
   return { text, mode: 'succes' };
 }
