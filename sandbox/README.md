@@ -1,45 +1,19 @@
-# Sandboxes éphémères sur Fly.io
+# Terminal jetable (sandbox) — moteur unique
 
-LibreChat ne fait que **commander** : il parle à l'orchestrateur (serveur MCP). Rien de lourd ne tourne dans l'app principale.
+L'IA du chat est le SEUL moteur : elle pilote le terminal avec l'outil MCP `execute_command`.
+Le conteneur Fly est un exécuteur passif (aucune clé LLM, aucune IA autonome).
 
-```
-LibreChat ──MCP (X-User-Id posé par LibreChat)──> orchestrateur ──API Machines──> conteneur éphémère
-                                                       ^                              │ clone, correction IA, push, PR
-                                                       └── proxy LLM + rapport ───────┘ (auto_destroy)
-```
+- `orchestrator/` : serveur MCP (find_repos, execute_command, close_session, my_quota, link_pages). Crée un conteneur à la première commande, le garde ouvert entre les appels (10 min d'inactivité max, 1 h au total).
+- `worker/run.js` : boucle qui attend les commandes de l'orchestrateur (`/internal/next`), les lance dans un groupe de processus et renvoie la sortie.
 
-- **Orchestrateur** (`orchestrator/`) : seul à détenir `FLY_API_TOKEN` et la clé LLM. Applique les quotas, crée les machines avec `auto_destroy: true`, `restart: no`, aucun port exposé.
-- **Worker** (`worker/`) : image du conteneur. Clone, boucle d'agent, push sur la branche `ai-fix/<id>`, ouvre une pull request, puis le processus s'arrête et la machine disparaît.
-- **Cloisonnement par utilisateur** : l'identité vient de `{{LIBRECHAT_USER_ID}}` (injecté par le serveur LibreChat, non falsifiable par le modèle). Limites : 1 tâche simultanée, 5 tâches/jour, 150 000 tokens/tâche, 400 000 tokens/jour (voir `orchestrator/fly.toml`).
-- **Budget** : le conteneur n'a jamais la clé LLM. Il passe par `/internal/llm`, qui décompte chaque appel et refuse au-delà du plafond.
-- **Filet de sécurité** : durée max 900 s (côté worker et côté orchestrateur), balayage toutes les 30 s des machines expirées ou orphelines.
+## Arrêt (bouton Stop du chat)
 
-## Déploiement
+L'appel `execute_command` est lié à un seul signal d'annulation : annulation MCP du chat ou connexion HTTP coupée.
+Au déclenchement, l'orchestrateur répond tout de suite au worker (`/internal/watch`) qui envoie SIGTERM puis SIGKILL (2 s) au groupe de processus. Si le worker ne confirme pas en 8 s, le conteneur est détruit.
+Endpoint de secours : `POST /sessions/cancel` (Authorization Bearer + X-User-Id).
 
-```bash
-# 1. App des conteneurs + image
-fly apps create jeremy-sbx-jobs
-(cd sandbox/worker && fly deploy --build-only --push --image-label latest -a jeremy-sbx-jobs)
-fly tokens create deploy -a jeremy-sbx-jobs        # => FLY_API_TOKEN
+## Variables (orchestrateur)
 
-# 2. Orchestrateur
-fly apps create jeremy-sbx-orch
-fly volumes create orch_data -a jeremy-sbx-orch -r ams -n 1 -s 1
-fly secrets set -a jeremy-sbx-orch \
-  FLY_API_TOKEN=... \
-  ORCHESTRATOR_SECRET=$(openssl rand -hex 32) \
-  LLM_API_KEY=<clé Gemini>
-(cd sandbox/orchestrator && fly deploy -a jeremy-sbx-orch)
+FLY_API_TOKEN, SANDBOX_APP, SANDBOX_IMAGE, ORCHESTRATOR_SECRET, ORCHESTRATOR_PUBLIC_URL. Facultatives : SESSION_IDLE_SEC (600), SESSION_MAX_SEC (3600), CMD_MAX_SEC (170, doit rester sous le timeout MCP de librechat.yaml), DAILY_JOBS_PER_USER (5), MAX_CONCURRENT_PER_USER (1), MAX_CONCURRENT_GLOBAL (4). LLM_API_KEY et les variables EXPERT_* ne servent plus.
 
-# 3. LibreChat : même secret que l'orchestrateur, puis redéploiement
-fly secrets set -a librechat-a7cwuq ORCHESTRATOR_SECRET=<le même>
-fly deploy -a librechat-a7cwuq
-```
-
-Chaque utilisateur saisit son token GitHub (fine-grained, limité à ses dépôts : *Contents* et *Pull requests* en lecture/écriture) dans les réglages du serveur MCP « sandbox ».
-
-## Limites connues
-
-- Les commandes lancées par l'agent (tests) s'exécutent avec un environnement vide, mais le token GitHub reste en mémoire du worker : utiliser des tokens limités à un seul dépôt.
-- Une seule machine d'orchestrateur (SQLite sur volume). Pour plusieurs instances, passer à Postgres ou Redis.
-- Si la réponse d'un job n'arrive pas avant `recursionLimit: 2` dans `librechat.yaml`, demander le statut dans un second message (`get_job`).
+Les anciens `patch-*.js` et `cf-*.snippet` de `orchestrator/src` ne sont plus utilisés (leur logique est intégrée à `server.js`).
