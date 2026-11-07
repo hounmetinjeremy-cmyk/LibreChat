@@ -1,6 +1,7 @@
 /**
  * Branche la page admin « /admin-config » et le chargement des clés dans api/server/index.js.
  * Si une ancre est introuvable, le build échoue volontairement (l'ancienne version reste en ligne).
+ * OpenRouter (Relace) : patch-openrouter.js, appliqué ci-dessous.
  */
 require('./patch-google-link.js');
 require('./patch-identity.js');
