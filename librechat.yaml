@@ -24,12 +24,11 @@ speech:
 
 endpoints:
   # Limite d'étapes par message. Une étape = un passage du modèle OU des outils.
-  # Sans outil : 1 étape. Un tour d'outil = 3 étapes (modèle, outil, modèle qui lit le résultat).
-  # 60 = permet de suivre une tâche jusqu'à sa fin (15 minutes au plus, durée maximale d'une tâche) :
-  # get_job attend 150 s à chaque appel, soit environ 6 appels (moins de tokens relus qu'avec 45 s).
+  # Modèle à moteur unique : l'IA du chat pilote le terminal commande par commande (execute_command),
+  # chaque commande coûte donc des étapes. 100 permet une tâche complète (clone, édition, tests, push).
   agents:
-    recursionLimit: 60
-    maxRecursionLimit: 60
+    recursionLimit: 100
+    maxRecursionLimit: 100
 
   custom:
     # Les utilisateurs ne voient que « Aube » et « Soleil ».
@@ -87,7 +86,7 @@ endpoints:
 # Si le chat affiche « The agent is configured to use MCP tools, but none are available », c'est que
 # sandbox ne se connecte pas : retirer mcpServers ci-dessous et vérifier les logs de jeremy-sbx-orch.
 # Le bouton + (menu des serveurs MCP) reste visible : les autres serveurs y restent accessibles.
-# Aube utilise le terminal « sandbox » (DeepSeek seul) ; Soleil utilise « sandbox-soleil » (DeepSeek + expert Claude).
+# Aube et Soleil utilisent le même terminal ; c'est l'IA du chat qui travaille (moteur unique).
 modelSpecs:
   enforce: true
   prioritize: true
@@ -135,27 +134,16 @@ mcpServers:
       X-Link-Key: "${ORCHESTRATOR_SECRET}"
     timeout: 60000
 
-  # Terminal Linux jetable sur Fly.io : LibreChat ne fait que commander l'orchestrateur, qui crée un
-  # conteneur par tâche (clone, vérifications, correction, déploiement, push, PR) puis le détruit.
+  # Terminal Linux jetable sur Fly.io, MOTEUR UNIQUE : l'IA du chat pilote le terminal avec execute_command
+  # (une commande bash par appel). L'orchestrateur ouvre un conteneur à la première commande et le ferme
+  # après 10 min d'inactivité. Le conteneur n'a aucune IA ni clé LLM. Au clic sur Stop, l'appel MCP est
+  # annulé et la commande en cours est tuée immédiatement dans le conteneur.
   # chatMenu: false = ce serveur seul est caché du menu + ; les autres serveurs y restent visibles.
-  # Il est activé en arrière-plan pour Aube et Soleil (modelSpecs.mcpServers) ; l'IA décide seule.
-  # AUCUNE variable utilisateur à remplir : la connexion ne dépend plus d'aucune clé.
-  # GitHub, deux voies : l'utilisateur connecte son compte une fois (bouton « connexion-github » du
-  # menu + ou lien donné par l'outil ; l'orchestrateur récupère son token chiffré via
-  # /api/github-link de LibreChat), OU il envoie un token GitHub dans le chat.
-  # Cloudflare : si le connecteur « cloudflare » est activé dans la conversation (menu +, connexion OAuth),
-  # l'IA l'utilise directement (base D1, SQL) sans demander de clé ; sinon elle propose de l'activer ou
-  # de connecter le dépôt à Cloudflare Pages (déploiement Git). Clé Cloudflare = dernier recours.
-  # Vercel, Render, Fly.io : quand la tâche en a besoin, l'IA demande à l'utilisateur de
-  # générer sa clé et de l'envoyer dans le chat, puis la passe à run_task (paramètres facultatifs).
-  # Outils : find_repos (cherche les dépôts de l'utilisateur), run_task, get_job, my_quota.
-  # L'identité vient de LibreChat (non falsifiable) ; quotas de tâches et de tokens par utilisateur.
-  # Suivi en direct : un panneau sous le message (client/.../Parts/SandboxJobLive.tsx, route
-  # /api/sandbox-job) affiche les étapes et les erreurs du terminal toutes les 3 s, sans passer par l'IA.
-  # L'IA écrit une phrase « Travail en cours » puis appelle get_job (150 s d'attente, moins que le délai de
-  # 200 s ci-dessous) en silence jusqu'à la fin, puis donne le résultat. Chaque rappel de get_job fait
-  # relire toute la conversation au modèle : peu de rappels = peu de tokens. Réglable avec la variable
-  # GET_JOB_MAX_WAIT de l'orchestrateur (garder sa valeur inférieure au délai ci-dessous).
+  # Activé en arrière-plan pour Aube et Soleil (modelSpecs.mcpServers) ; l'IA décide seule.
+  # AUCUNE variable utilisateur à remplir. GitHub : l'utilisateur connecte son compte une fois (bouton
+  # « connexion-github » du menu + ou lien donné par l'outil) OU envoie un token dans le chat.
+  # Le timeout (200 s) doit rester supérieur à CMD_MAX_SEC de l'orchestrateur (170 s par défaut).
+  # Outils : find_repos, execute_command, close_session, my_quota, link_pages.
   # Secret Fly : ORCHESTRATOR_SECRET. SANDBOX_MCP_URL sert aussi au panneau de suivi.
   sandbox:
     type: streamable-http
@@ -165,11 +153,10 @@ mcpServers:
       Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
       X-User-Id: "{{LIBRECHAT_USER_ID}}"
     timeout: 200000
-    serverInstructions: &sbxInstructions "Pour toute tâche de code, de projet ou de déploiement : si l'utilisateur ne donne pas le nom exact du dépôt (proprietaire/nom), appelle d'abord find_repos avec les mots qu'il a écrits, puis propose-lui les dépôts trouvés en une phrase courte (« Tu parles de X ? ») et attends son oui avant d'appeler run_task. S'il donne le nom exact, appelle run_task directement. Appelle run_task une seule fois (jamais deux fois pour la même demande). Dès qu'il rend un job_id, un panneau de suivi en direct s'affiche tout seul sous ton message : il montre les étapes et les erreurs, donc tu ne les écris pas. Écris seulement une phrase courte : « Travail en cours, patiente un peu, je te fais le retour dès que c'est fini. », puis appelle get_job avec wait_seconds=150, en boucle et SANS écrire de texte entre les appels, tant que le statut est running. Ne demande jamais à l'utilisateur de redemander le statut : tu attends la fin toi-même. Quand le statut est success ou failed, donne le résultat en quelques phrases : ce qui est corrigé, ce qui reste à faire, le lien de la pull request, ou la raison de l'échec telle qu'elle est dans summary. Si un outil répond que GitHub n'est pas connecté, propose les deux choix indiqués par l'outil (lien de connexion tel quel, ou token GitHub envoyé dans le chat). Si la tâche demande Cloudflare : si les outils du connecteur cloudflare sont disponibles dans cette conversation, utilise-les directement (création de la base D1, requêtes SQL, configuration) sans demander de clé. S'ils ne sont pas disponibles, propose d'abord à l'utilisateur d'activer le connecteur cloudflare depuis le menu + (connexion OAuth), ou de connecter son dépôt à Cloudflare Pages (déploiement Git). Ne demande une clé Cloudflare (envoyée dans le chat, puis passée au paramètre de run_task correspondant) qu'en dernier recours, si aucune de ces deux voies n'est possible. Si la tâche demande Vercel, Render ou Fly.io, dis à l'utilisateur de générer sa clé sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre de run_task correspondant. Ne demande jamais une clé dont la tâche n'a pas besoin."
+    serverInstructions: &sbxInstructions >-
+      Terminal Linux jetable pour toute tâche de code, de projet ou de déploiement. Tu le pilotes toi-même avec l'outil execute_command : une commande bash par appel, dossier de départ /work, la sortie t'est renvoyée. Tout se fait par commandes, une étape à la fois, en lisant chaque résultat avant la suivante : git clone, lecture et écriture de fichiers (cat, sed, heredoc), installation, tests, build, déploiement, git commit et push. Chaque appel démarre un bash neuf : utilise le paramètre cwd ou cd dossier && commande. Les fichiers persistent entre les appels. Si l'utilisateur ne donne pas le nom exact du dépôt (propriétaire/nom), appelle d'abord find_repos avec les mots qu'il a écrits, propose-lui les dépôts trouvés en une phrase courte (Tu parles de X ?) et attends son oui avant de cloner. S'il donne le nom exact, clone directement. Ne lis pas tout le projet : cherche avec grep, lis seulement les extraits utiles. Quand l'utilisateur clique sur Stop, la commande en cours est tuée immédiatement : ne la relance pas et n'enchaîne pas d'autres commandes, attends sa prochaine demande. Quand le travail est terminé, résume en quelques phrases ce qui est fait, ce qui reste à faire et le lien utile (pull request, site), puis appelle close_session (facultatif : le terminal se ferme aussi tout seul après 10 minutes sans commande). Ne demande jamais de clé ni de token à l'utilisateur sauf si la tâche en a vraiment besoin. Si un résultat indique que GitHub n'est pas connecté, suis ses indications (lien de connexion tel quel, ou token envoyé dans le chat à passer dans le paramètre github_token). Si la tâche demande Cloudflare : si les outils du connecteur cloudflare sont disponibles dans cette conversation, utilise-les directement (création de la base D1, requêtes SQL, configuration) sans demander de clé ; sinon propose d'abord d'activer le connecteur cloudflare depuis le menu + (connexion OAuth), ou de déployer avec wrangler (la clé est déjà dans l'environnement du terminal quand le compte est connecté) et de relier le dépôt à Cloudflare Pages avec link_pages. Clé Cloudflare envoyée dans le chat (paramètre cloudflare_token) = dernier recours. Si la tâche demande Vercel, Render ou Fly.io, dis à l'utilisateur de générer sa clé sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre correspondant d'execute_command (vercel_token, render_key, fly_token). N'affiche jamais une clé dans une commande ni dans ta réponse.
 
-  # Même terminal, mais pour Soleil : ?tier=soleil active l'expert (un modèle fort, Claude, donne des
-  # instructions quand le modèle de travail est bloqué) et le plafond de dépense mensuel de Soleil.
-  # Aube utilise « sandbox » (?tier=aube), sans expert.
+  # Même terminal pour Soleil (même orchestrateur ; seul le modèle du chat diffère).
   sandbox-soleil:
     type: streamable-http
     url: ${SANDBOX_MCP_URL}?tier=soleil
