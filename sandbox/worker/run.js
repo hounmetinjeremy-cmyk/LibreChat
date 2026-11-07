@@ -1,15 +1,19 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { filterOutput } from "./output-filter.js";
 
 // Exécuteur PASSIF : ce conteneur n'a ni IA, ni clé LLM. L'IA du chat envoie des commandes
 // (outil execute_command) via l'orchestrateur ; ce programme les lance une par une et renvoie la sortie.
 // Annulation : dès que l'orchestrateur signale l'arrêt (clic sur Stop dans le chat), tout le groupe
 // de processus de la commande reçoit SIGTERM, puis SIGKILL 2 s plus tard.
+// Économie de tokens : la sortie passe par output-filter.js (bruit retiré, fiche courte en cas d'échec,
+// code affiché jamais réduit). Le journal complet de chaque commande reste dans /tmp/out-<id>.log.
 const { JOB_TOKEN, ORCHESTRATOR_URL, MAX_RUNTIME_SEC = "3600" } = process.env;
-const ROOT = "/work";
+const ROOT = process.env.WORK_ROOT || "/work";
 const HEAD = 2500;
 const TAIL = 9500;
+const LOG_MAX = 5_000_000; // plafond du journal complet par commande (octets)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function api(p, opts = {}, timeoutMs = 30000) {
@@ -24,7 +28,7 @@ async function api(p, opts = {}, timeoutMs = 30000) {
 }
 
 // Garde le début et la fin de la sortie (l'erreur est presque toujours à la fin).
-function collector() {
+function collector(headMax = HEAD, tailMax = TAIL) {
   let head = "";
   let tail = "";
   let total = 0;
@@ -32,17 +36,17 @@ function collector() {
     push(chunk) {
       const s = chunk.toString("utf8");
       total += s.length;
-      if (head.length < HEAD) {
-        const room = HEAD - head.length;
+      if (head.length < headMax) {
+        const room = headMax - head.length;
         head += s.slice(0, room);
         tail += s.slice(room);
       } else {
         tail += s;
       }
-      if (tail.length > TAIL * 2) tail = tail.slice(-TAIL);
+      if (tail.length > tailMax * 2) tail = tail.slice(-tailMax);
     },
     text() {
-      const t = tail.length > TAIL ? tail.slice(-TAIL) : tail;
+      const t = tail.length > tailMax ? tail.slice(-tailMax) : tail;
       const cut = total - head.length - t.length;
       return cut > 0 ? `${head}\n...[${cut} caractères omis]...\n${t}` : head + t;
     },
@@ -57,7 +61,8 @@ const scrub = (text, env) => {
 
 function execCommand(c, env) {
   return new Promise((resolve) => {
-    const col = collector();
+    const col = collector(); // sortie brute telle qu'avant (secours si le filtre échoue)
+    const full = collector(100000, 300000); // matière du filtre : début et fin, bien plus large
     let cwd = ROOT;
     if (c.cwd) {
       cwd = path.resolve(ROOT, c.cwd);
@@ -66,6 +71,24 @@ function execCommand(c, env) {
       }
       if (!fs.existsSync(cwd)) return resolve({ code: 2, out: `dossier introuvable : ${c.cwd}`, timedOut: false, signal: null });
     }
+    // Journal complet : l'IA le relit avec tail, grep ou cat si la fiche ne suffit pas.
+    const logPath = `/tmp/out-${String(c.id).replace(/[^\w-]/g, "")}.log`;
+    let log = null;
+    try {
+      log = fs.createWriteStream(logPath, { flags: "w", mode: 0o600 });
+      log.on("error", () => {});
+    } catch {
+      log = null;
+    }
+    let logged = 0;
+    const feed = (d) => {
+      col.push(d);
+      full.push(d);
+      if (log && logged < LOG_MAX) {
+        logged += d.length;
+        log.write(d);
+      }
+    };
     const child = spawn("bash", ["-lc", c.command], {
       cwd,
       detached: true, // nouveau groupe de processus : on peut tuer toute l'arborescence d'un coup
@@ -110,12 +133,30 @@ function execCommand(c, env) {
         child.stdout.destroy();
         child.stderr.destroy();
       } catch {}
-      resolve({ code, signal: signal || null, timedOut, cancelled, out: scrub(col.text(), env) });
+      try {
+        if (log) log.end();
+      } catch {}
+      let out;
+      try {
+        out = filterOutput({
+          command: c.command,
+          code,
+          signal,
+          timedOut,
+          timeoutSec: Number(c.timeout),
+          raw: full.text(),
+          logPath,
+        }).text;
+      } catch (err) {
+        console.error("filtre de sortie :", err.message);
+        out = col.text();
+      }
+      resolve({ code, signal: signal || null, timedOut, cancelled, out: scrub(out, env) });
     };
-    child.stdout.on("data", (d) => col.push(d));
-    child.stderr.on("data", (d) => col.push(d));
+    child.stdout.on("data", feed);
+    child.stderr.on("data", feed);
     child.on("error", (err) => {
-      col.push(Buffer.from(`erreur de lancement : ${err.message}`));
+      feed(Buffer.from(`erreur de lancement : ${err.message}`));
       done(127, null);
     });
     // 'exit' + courte marge pour vider les tuyaux (un processus d'arrière-plan peut garder 'close' ouvert).
