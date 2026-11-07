@@ -51,12 +51,13 @@ function reportTokens(user, tokens) {
   );
 }
 
-/** Tokens à compter : ceux du fournisseur, sans la partie déjà en cache (qui coûte presque rien), sinon une estimation. */
+/**
+ * Tokens à compter : exactement ceux que le fournisseur annonce (entrée + sortie, comme le tableau de bord
+ * OpenRouter). Sans chiffre du fournisseur, une estimation.
+ */
 function countedTokens(usage, inChars, outChars) {
   if (usage && Number(usage.total_tokens) > 0) {
-    const details = usage.prompt_tokens_details || {};
-    const cached = Number(details.cached_tokens ?? usage.prompt_cache_hit_tokens) || 0;
-    return Math.max(Number(usage.total_tokens) - cached, 0);
+    return Number(usage.total_tokens);
   }
   return Math.ceil(inChars / 3.5 + outChars / 3.5);
 }
