@@ -71,6 +71,9 @@ RUN node patch-branding.js
 # Ajoute la page admin « /admin-config » pour enregistrer les clés des fournisseurs (voir patch-admin-keys.js)
 RUN node patch-admin-keys.js
 
+# Interface façon Claude : outils sans contour, logo qui tourne pendant le travail (voir patch-claude-ui.js)
+RUN node patch-claude-ui.js
+
 RUN \
     # React client build with configurable memory
     NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}" npm run frontend; \
