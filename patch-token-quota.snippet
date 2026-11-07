@@ -1,0 +1,133 @@
+/* ---------- quota de tokens du jour (compté ici, rangé par l'orchestrateur) ---------- */
+
+const QUOTA_USER_RE = /^[A-Za-z0-9_-]{8,64}$/;
+
+const orchBase = () =>
+  String(process.env.SANDBOX_ORCH_URL || process.env.SANDBOX_MCP_URL || '')
+    .replace(/\/+$/, '')
+    .replace(/\/mcp$/, '');
+
+/** Identifiant de l'utilisateur, envoyé par LibreChat dans l'en-tête X-User-Id (voir librechat.yaml). */
+const quotaUserOf = (req) => {
+  const u = String((req.headers && req.headers['x-user-id']) || '');
+  return QUOTA_USER_RE.test(u) ? u : '';
+};
+
+const quotaFetch = (route, user, init) =>
+  fetch(`${orchBase()}${route}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${process.env.ORCHESTRATOR_SECRET || ''}`,
+      'X-User-Id': user,
+      'Content-Type': 'application/json',
+    },
+    signal: AbortSignal.timeout(4000),
+  });
+
+/** Tokens restants aujourd'hui, ou null si l'orchestrateur ne répond pas (le chat n'est alors jamais bloqué). */
+async function quotaLeft(user) {
+  if (!orchBase() || !process.env.ORCHESTRATOR_SECRET) {
+    return null;
+  }
+  try {
+    const r = await quotaFetch('/quota', user, { method: 'GET' });
+    if (!r.ok) {
+      return null;
+    }
+    const j = await r.json();
+    return Number.isFinite(Number(j.remaining)) ? Number(j.remaining) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Envoie les tokens consommés à l'orchestrateur, sans attendre sa réponse. */
+function reportTokens(user, tokens) {
+  if (!user || !(tokens > 0) || !orchBase() || !process.env.ORCHESTRATOR_SECRET) {
+    return;
+  }
+  quotaFetch('/usage', user, { method: 'POST', body: JSON.stringify({ tokens: Math.round(tokens) }) }).catch(
+    () => {},
+  );
+}
+
+/** Tokens à compter : ceux du fournisseur, sans la partie déjà en cache (qui coûte presque rien), sinon une estimation. */
+function countedTokens(usage, inChars, outChars) {
+  if (usage && Number(usage.total_tokens) > 0) {
+    const details = usage.prompt_tokens_details || {};
+    const cached = Number(details.cached_tokens ?? usage.prompt_cache_hit_tokens) || 0;
+    return Math.max(Number(usage.total_tokens) - cached, 0);
+  }
+  return Math.ceil(inChars / 3.5 + outChars / 3.5);
+}
+
+/** Écoute la réponse du fournisseur (flux ou JSON) sans la modifier, puis compte les tokens utilisés. */
+function meterStream(readable, streaming, inChars, user) {
+  let buf = '';
+  let whole = '';
+  let usage = null;
+  let outChars = 0;
+  let done = false;
+  const eat = (obj) => {
+    if (!obj || typeof obj !== 'object') {
+      return;
+    }
+    if (obj.usage) {
+      usage = obj.usage;
+    }
+    const ch = obj.choices && obj.choices[0];
+    if (!ch) {
+      return;
+    }
+    const piece = ch.delta || ch.message || {};
+    outChars += String(piece.content || '').length + String(piece.reasoning_content || '').length;
+    if (piece.tool_calls) {
+      outChars += JSON.stringify(piece.tool_calls).length;
+    }
+  };
+  readable.on('data', (chunk) => {
+    try {
+      const text = chunk.toString('utf8');
+      if (streaming) {
+        buf += text;
+        let nl = buf.indexOf('\n');
+        while (nl >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (line.startsWith('data:') && !line.includes('[DONE]')) {
+            try {
+              eat(JSON.parse(line.slice(5)));
+            } catch (e) {
+              /* ligne incomplète : ignorée */
+            }
+          }
+          nl = buf.indexOf('\n');
+        }
+      } else if (whole.length < 4000000) {
+        whole += text;
+      }
+    } catch (e) {
+      /* comptage ignoré */
+    }
+  });
+  const finish = () => {
+    if (done) {
+      return;
+    }
+    done = true;
+    try {
+      if (!streaming) {
+        try {
+          eat(JSON.parse(whole));
+        } catch (e) {
+          /* réponse coupée : estimation */
+        }
+      }
+      reportTokens(user, countedTokens(usage, inChars, outChars));
+    } catch (e) {
+      /* comptage ignoré */
+    }
+  };
+  readable.on('end', finish);
+  readable.on('close', finish);
+}
