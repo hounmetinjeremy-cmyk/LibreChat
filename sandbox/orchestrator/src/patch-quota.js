@@ -3,6 +3,8 @@
 // sont comptés par LibreChat (route /ai-proxy) puis envoyés ici (POST /usage). L'orchestrateur les range par
 // utilisateur et par jour (table usage), répond au solde (GET /quota, outil my_quota) et refuse les commandes du
 // terminal quand le quota est épuisé.
+// Économie de tokens : la sortie d'une commande est limitée à 6 000 caractères (environ 1 500 tokens) au lieu de
+// 12 000, car chaque résultat est ensuite relu par l'IA du chat à chaque étape suivante.
 // Idempotent. Si une ancre est introuvable, le build échoue volontairement (l'ancienne version reste en ligne).
 import fs from "node:fs";
 
@@ -64,6 +66,11 @@ const edits = [
       "});\n" +
       "\n" +
       "// Arrêt explicite (en plus de l'annulation MCP) : tue la commande en cours de cet utilisateur.\n",
+  ],
+  [
+    "sortie des commandes",
+    "const clip = (t, n = 12000) =>",
+    "const clip = (t, n = 6000) =>",
   ],
 ];
 
