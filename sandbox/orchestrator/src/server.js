@@ -7,7 +7,11 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
-// ---------------------------------------------------------------- configuration
+// Modèle à moteur unique : l'IA du chat pilote tout (outil execute_command). Le conteneur n'est qu'un
+// exécuteur passif de commandes. Le clic sur Stop dans le chat annule la requête MCP en cours ; cet
+// orchestrateur tue alors immédiatement le processus du conteneur (SIGTERM, puis SIGKILL côté worker).
+
+// ------------------------------------------------------------------------------------ configuration
 const e = process.env;
 const need = (k) => {
   if (!e[k]) {
@@ -24,40 +28,19 @@ const C = {
   secret: need("ORCHESTRATOR_SECRET"),
   publicUrl: need("ORCHESTRATOR_PUBLIC_URL").replace(/\/$/, ""),
   libreUrl: (e.LIBRECHAT_URL || "https://librechat-a7cwuq.fly.dev").replace(/\/$/, ""),
-  llmKey: need("LLM_API_KEY"),
-  llmBase: (e.LLM_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, ""),
-  llmModel: e.LLM_MODEL || "gemini-2.5-flash",
-  llmReasoning: e.LLM_REASONING_EFFORT || "", // "low" | "medium" | "high" | "none" : limite la réflexion du modèle (la sortie coûte cher)
-  // Prix en dollars par million de tokens (sert à calculer la dépense quand le fournisseur ne donne pas le coût).
-  priceIn: Number(e.PRICE_IN_PER_M || 0.04),
-  priceOut: Number(e.PRICE_OUT_PER_M || 0.45),
-  // Soleil : un expert (modèle fort) donne des instructions quand le modèle de travail est bloqué.
-  expertModel: e.EXPERT_MODEL || "anthropic/claude-fable-5.1",
-  expertBase: (e.EXPERT_BASE_URL || e.LLM_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, ""),
-  expertKey: e.EXPERT_API_KEY || need("LLM_API_KEY"),
-  expertMaxPerJob: Number(e.EXPERT_MAX_PER_JOB || 3),
-  expertPriceIn: Number(e.EXPERT_PRICE_IN_PER_M || 10),
-  expertPriceOut: Number(e.EXPERT_PRICE_OUT_PER_M || 50),
-  // Plafond de dépense par utilisateur et par mois, en dollars, selon le modèle choisi (Aube ou Soleil).
-  capAube: Number(e.MONTHLY_SPEND_CAP_AUBE || 7.5),
-  capSoleil: Number(e.MONTHLY_SPEND_CAP_SOLEIL || 15),
   region: e.SANDBOX_REGION || "ams",
   memoryMb: Number(e.SANDBOX_MEMORY_MB || 1024),
-  maxRuntimeSec: Number(e.MAX_RUNTIME_SEC || 900),
+  sessionMaxSec: Number(e.SESSION_MAX_SEC || 3600), // durée maximale d'une session de terminal
+  idleSec: Number(e.SESSION_IDLE_SEC || 600), // session fermée après 10 min sans commande
   perUserConcurrent: Number(e.MAX_CONCURRENT_PER_USER || 1),
   globalConcurrent: Number(e.MAX_CONCURRENT_GLOBAL || 4),
-  jobsPerDay: Number(e.DAILY_JOBS_PER_USER || 5),
-  tokensPerJob: Number(e.TOKENS_PER_JOB || 150000),
-  tokensPerDay: Number(e.TOKENS_PER_USER_DAY || 400000),
-  // Attente maximale d'un appel get_job. Chaque rappel de get_job fait relire toute la conversation au modèle
-  // du chat : plus l'attente est longue, moins il y a de rappels (150 s = environ 6 appels pour 15 minutes,
-  // contre 20 avec 45 s). Doit rester inférieur au « timeout » du serveur sandbox dans librechat.yaml.
-  maxWait: Math.max(5, Math.min(Number(e.GET_JOB_MAX_WAIT || 150), 280)),
+  sessionsPerDay: Number(e.DAILY_JOBS_PER_USER || 5),
+  cmdDefaultSec: 120,
+  // Doit rester inférieur au « timeout » du serveur sandbox dans librechat.yaml (200 s).
+  cmdMaxSec: Math.max(5, Math.min(Number(e.CMD_MAX_SEC || 170), 190)),
 };
 
 // Clés de services (en-tête -> variable d'environnement du conteneur).
-// Les en-têtes restent acceptés mais ne sont plus obligatoires : l'utilisateur peut aussi envoyer
-// ses clés dans le chat, l'IA les passe alors en paramètres de run_task (voir svcFromParams).
 const SVC = {
   "x-svc-vercel": "VERCEL_TOKEN",
   "x-svc-cloudflare": "CLOUDFLARE_API_TOKEN",
@@ -72,8 +55,6 @@ const svcFrom = (h) => {
   }
   return o;
 };
-
-// Clés envoyées dans le chat : paramètres facultatifs de run_task -> variables du conteneur.
 const svcFromParams = (p) => {
   const o = {};
   if (p.vercel_token) o.VERCEL_TOKEN = p.vercel_token;
@@ -83,9 +64,7 @@ const svcFromParams = (p) => {
   return o;
 };
 
-// Garde-fou contre les boucles de recherche : au plus 3 recherches de dépôts par utilisateur en 5 minutes.
-// Au-delà, l'outil refuse et dit à l'IA de demander le nom exact à l'utilisateur (c'est le serveur qui arrête,
-// pas la bonne volonté du modèle).
+// Garde-fou contre les boucles de recherche : 3 recherches de dépôts par utilisateur en 5 minutes.
 const FIND_LOG = new Map();
 function findAllowed(userId) {
   const now = Date.now();
@@ -101,7 +80,7 @@ function findAllowed(userId) {
 
 const tokenParam = (label) => z.string().min(8).max(500).regex(/^\S+$/).optional().describe(label);
 
-// ---------------------------------------------------------------- base de données
+// ------------------------------------------------------------------------------------ base de données
 const dbPath = e.DB_PATH || "/data/orch.db";
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 const db = new Database(dbPath);
@@ -118,41 +97,15 @@ CREATE TABLE IF NOT EXISTS usage (
   PRIMARY KEY (user_id, day)
 );
 `);
-// Journal d'activité de la tâche (ajouté après coup : ignoré si la colonne existe déjà).
-try {
-  db.exec("ALTER TABLE jobs ADD COLUMN activity TEXT");
-} catch {}
-
-// Niveau (Aube ou Soleil), consultations de l'expert et coût en millionièmes de dollar, par tâche.
-for (const col of ["tier TEXT", "expert_calls INTEGER NOT NULL DEFAULT 0", "cost_micro INTEGER NOT NULL DEFAULT 0"]) {
+for (const col of ["activity TEXT", "tier TEXT", "expert_calls INTEGER NOT NULL DEFAULT 0", "cost_micro INTEGER NOT NULL DEFAULT 0"]) {
   try {
     db.exec(`ALTER TABLE jobs ADD COLUMN ${col}`);
   } catch {}
 }
-// Dépense du mois par utilisateur, en millionièmes de dollar.
-db.exec("CREATE TABLE IF NOT EXISTS spend (user_id TEXT NOT NULL, month TEXT NOT NULL, micro INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, month))");
 
 const today = () => new Date().toISOString().slice(0, 10);
-const thisMonth = () => new Date().toISOString().slice(0, 7);
-const tierOf = (t) => (t === "soleil" ? "soleil" : "aube");
-const capMicro = (t) => Math.round((tierOf(t) === "soleil" ? C.capSoleil : C.capAube) * 1e6);
-const monthSpend = (userId) => db.prepare("SELECT micro FROM spend WHERE user_id=? AND month=?").get(userId, thisMonth())?.micro || 0;
-// Coût d'un appel en millionièmes de dollar : le coût donné par le fournisseur (OpenRouter) s'il existe,
-// sinon tokens envoyés et reçus x prix par million (1 $ par million de tokens = 1 millionième de $ par token).
-function costMicro(usage, pin, pout, fallbackTokens) {
-  if (Number.isFinite(Number(usage?.cost)) && Number(usage.cost) > 0) return Math.round(Number(usage.cost) * 1e6);
-  const i = Number(usage?.prompt_tokens);
-  const o = Number(usage?.completion_tokens);
-  if (Number.isFinite(i) && Number.isFinite(o) && i + o > 0) return Math.round(i * pin + o * pout);
-  return Math.round((Number(usage?.total_tokens) || fallbackTokens) * pout);
-}
-// Enregistre jetons et coût d'un appel pour la tâche, la journée et le mois.
-const record = db.transaction((job, used, cost, expert) => {
-  db.prepare("UPDATE jobs SET tokens_used=tokens_used+?, cost_micro=cost_micro+?, expert_calls=expert_calls+? WHERE id=?").run(used, cost, expert ? 1 : 0, job.id);
-  db.prepare("INSERT INTO usage (user_id,day,tokens) VALUES (?,?,?) ON CONFLICT(user_id,day) DO UPDATE SET tokens=tokens+?").run(job.user_id, today(), used, used);
-  db.prepare("INSERT INTO spend (user_id,month,micro) VALUES (?,?,?) ON CONFLICT(user_id,month) DO UPDATE SET micro=micro+?").run(job.user_id, thisMonth(), cost, cost);
-});
 const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
+const rand = (n) => crypto.randomBytes(n).toString("hex");
 const safeEq = (a, b) => {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
@@ -160,18 +113,34 @@ const safeEq = (a, b) => {
 };
 const ACTIVE = "('queued','running')";
 
-// Jetons et clés : gardés en mémoire seulement, remis une seule fois au worker.
-const creds = new Map();
+// Une « tâche » (job) = une session de terminal. Journal d'activité lu par le panneau de suivi du chat.
+function addActivity(id, line) {
+  const l = String(line).replace(/\s+/g, " ").trim().slice(0, 200);
+  if (!l) return;
+  const j = db.prepare("SELECT activity FROM jobs WHERE id=?").get(id);
+  const next = (j && j.activity ? `${j.activity}\n` : "") + l;
+  db.prepare("UPDATE jobs SET activity=? WHERE id=?").run(next.slice(-3000), id);
+}
+function finish(id, status, summary) {
+  db.prepare(`UPDATE jobs SET status=?, summary=?, finished_at=? WHERE id=? AND status IN ${ACTIVE}`).run(
+    status,
+    String(summary || "").slice(0, 2000),
+    Date.now(),
+    id
+  );
+}
+const scrubWith = (secrets, text) => {
+  let t = String(text);
+  for (const v of secrets) if (v && v.length >= 8) t = t.split(v).join("***");
+  return t;
+};
 
-// ---------------------------------------------------------------- connexion GitHub (via LibreChat)
-// Lien signé : prouve à LibreChat que la demande vient de cet orchestrateur pour cet utilisateur.
+// ------------------------------------------------------------------------------------ GitHub (via LibreChat)
 const hmac = (s) => crypto.createHmac("sha256", C.secret).update(s).digest("hex");
 function connectLink(userId) {
   const exp = Date.now() + 30 * 60000;
   return `${C.libreUrl}/api/github-link/start?u=${encodeURIComponent(userId)}&e=${exp}&s=${hmac(`${userId}.${exp}`)}`;
 }
-
-// Token GitHub de l'utilisateur, rangé chiffré côté LibreChat quand il a connecté son compte.
 async function linkedToken(userId) {
   try {
     const r = await fetch(`${C.libreUrl}/api/github-link/token?user=${encodeURIComponent(userId)}`, {
@@ -185,9 +154,7 @@ async function linkedToken(userId) {
     return null;
   }
 }
-
-// GitHub : les deux voies marchent. 1) compte connecté via LibreChat (prioritaire),
-// 2) token envoyé dans le chat (paramètre github_token), 3) ancien en-tête X-GitHub-Token (secours).
+// 1) compte connecté via LibreChat, 2) token envoyé dans le chat, 3) ancien en-tête X-GitHub-Token.
 async function pickGithub(userId, chatToken, headerToken) {
   const linked = await linkedToken(userId);
   if (linked) return linked;
@@ -196,18 +163,40 @@ async function pickGithub(userId, chatToken, headerToken) {
   }
   return "";
 }
-
 const githubMissing = (userId, then) =>
-  `GitHub n'est pas encore connecté pour cet utilisateur. Propose-lui deux choix : (1) connecter son compte GitHub avec ce lien, à lui donner tel quel (une seule fois, valable 30 minutes) : ${connectLink(userId)} ; ou (2) générer un token GitHub avec accès à son dépôt (droits Contents et Pull requests en lecture/écriture) et te l'envoyer dans le chat. Si c'est un token, rappelle ${then} en le passant dans github_token.`;
+  `GitHub n'est pas encore connecté pour cet utilisateur. Écris une phrase courte puis affiche ce lien tel quel : [Jérémy Code](${connectLink(userId)}). En appuyant dessus, l'utilisateur connecte son compte GitHub et c'est fini (lien valable 30 minutes). Ne propose pas de token. Quand il a terminé, rappelle ${then}.`;
 
-// ---------------------------------------------------------------- recherche de dépôts (noms approximatifs)
+// ------------------------------------------------------------------------------------ Cloudflare (via LibreChat)
+const CF_DEPLOY_NOTE =
+  "Cloudflare est connecté (clés déjà dans l'environnement, ne les affiche jamais). Déploiement Pages : construis le projet (npm run build), puis lance « npx wrangler pages deploy ./dist --project-name=NOM --branch=main --commit-dirty=true » en remplaçant ./dist par le vrai dossier de sortie (dist, build ou out) et NOM par le nom du projet (minuscules, chiffres, tirets). Donne l'adresse https://NOM.pages.dev.";
+const CF_MISSING_NOTE =
+  "Cloudflare n'est pas connecté pour cet utilisateur : si la tâche demande un déploiement Cloudflare, ne tente rien et dis-lui de connecter son compte Cloudflare avec le bouton prévu.";
+const CF_INVALID_NOTE =
+  "Le jeton Cloudflare de l'utilisateur est invalide ou révoqué : si un déploiement Cloudflare est prévu, écris une phrase courte puis affiche exactement ce lien Markdown : [Connecter Cloudflare](#cloudflare-connect). ";
+async function cloudflareEnv(userId) {
+  try {
+    const r = await fetch(`${C.libreUrl}/api/cloudflare-link/credentials?user=${encodeURIComponent(userId)}`, {
+      headers: { Authorization: `Bearer ${C.secret}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return d && d.reconnect ? { invalid: true } : null;
+    if (typeof d.token === "string" && d.token.length >= 20 && /^[a-f0-9]{32}$/i.test(String(d.account_id))) {
+      return { env: { CLOUDFLARE_API_TOKEN: d.token, CLOUDFLARE_ACCOUNT_ID: String(d.account_id) } };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ------------------------------------------------------------------------------------ recherche de dépôts
 const norm = (s) =>
   String(s || "")
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "");
+    .replace(/[\u0300-\u036f]/g, "");
 const words = (s) => norm(s).split(/[^a-z0-9]+/).filter((w) => w.length >= 2);
-
 function lev(a, b) {
   let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
   for (let i = 1; i <= a.length; i++) {
@@ -219,15 +208,11 @@ function lev(a, b) {
   }
   return prev[b.length];
 }
-
-// Ressemblance entre deux mots : 1 = identique, 0 = rien en commun (tolère les fautes de frappe).
 const sim = (a, b) => {
   if (a === b) return 1;
   if (a.length >= 3 && b.length >= 3 && (a.includes(b) || b.includes(a))) return 0.85;
   return Math.max(0, 1 - lev(a, b) / Math.max(a.length, b.length));
 };
-
-// Tous les dépôts auxquels le token donne accès (300 au plus), les plus récents d'abord.
 async function userRepos(token) {
   const out = [];
   for (let page = 1; page <= 3; page++) {
@@ -245,7 +230,6 @@ async function userRepos(token) {
   }
   return out;
 }
-
 async function searchRepos(token, query) {
   const q = words(query);
   if (!q.length) return [];
@@ -271,7 +255,7 @@ async function searchRepos(token, query) {
   }));
 }
 
-// ---------------------------------------------------------------- API Fly Machines
+// ------------------------------------------------------------------------------------ API Fly Machines
 async function fly(method, p, body) {
   const r = await fetch(`https://api.machines.dev/v1/apps/${C.app}${p}`, {
     method,
@@ -283,23 +267,6 @@ async function fly(method, p, body) {
   if (!r.ok) throw new Error(`Fly ${r.status} : ${text.slice(0, 300)}`);
   return text ? JSON.parse(text) : {};
 }
-
-async function launch(jobId, userId, token) {
-  const m = await fly("POST", "/machines", {
-    name: `job-${jobId}`,
-    region: C.region,
-    config: {
-      image: C.image,
-      auto_destroy: true,
-      restart: { policy: "no" },
-      guest: { cpu_kind: "shared", cpus: 1, memory_mb: C.memoryMb },
-      env: { JOB_TOKEN: token, ORCHESTRATOR_URL: C.publicUrl, MAX_RUNTIME_SEC: String(C.maxRuntimeSec) },
-      metadata: { job_id: jobId, user_id: userId },
-    },
-  });
-  db.prepare("UPDATE jobs SET machine_id=?, status='running' WHERE id=?").run(m.id, jobId);
-}
-
 async function killMachine(id) {
   try {
     await fly("DELETE", `/machines/${id}?force=true`);
@@ -308,75 +275,235 @@ async function killMachine(id) {
   }
 }
 
-// ---------------------------------------------------------------- tâches
-function finish(id, status, summary, extra = {}) {
-  creds.delete(id);
-  db.prepare(
-    `UPDATE jobs SET status=?, summary=?, branch=COALESCE(?,branch), pr_url=COALESCE(?,pr_url), finished_at=?
-     WHERE id=? AND status IN ${ACTIVE}`
-  ).run(status, String(summary || "").slice(0, 2000), extra.branch || null, extra.pr_url || null, Date.now(), id);
-}
+// ------------------------------------------------------------------------------------ sessions de terminal
+// État vivant en mémoire (la base ne garde que le statut, les quotas et le journal d'activité).
+const SESS = new Map(); // id de session -> objet session
+const INFLIGHT = new Map(); // `${userId}:${id JSON-RPC}` -> AbortController de l'appel MCP en cours
+const userSession = (userId) => {
+  for (const s of SESS.values()) if (s.userId === userId && !s.closed) return s;
+  return null;
+};
 
-function reserveJob(userId, repo, base, instructions, tier) {
+function reserveSession(userId) {
   const day = today();
   return db.transaction(() => {
-    const u = db.prepare("SELECT tokens, jobs FROM usage WHERE user_id=? AND day=?").get(userId, day) || { tokens: 0, jobs: 0 };
-    if (monthSpend(userId) >= capMicro(tier)) return { error: `Budget du mois atteint pour ${tierOf(tier) === "soleil" ? "Soleil" : "Aube"}. Il se renouvelle le mois prochain.` };
-    if (u.jobs >= C.jobsPerDay) return { error: `Quota atteint : ${C.jobsPerDay} tâches par jour.` };
-    if (u.tokens >= C.tokensPerDay) return { error: "Quota de tokens du jour atteint." };
+    const u = db.prepare("SELECT jobs FROM usage WHERE user_id=? AND day=?").get(userId, day) || { jobs: 0 };
+    if (u.jobs >= C.sessionsPerDay) return { error: `Quota atteint : ${C.sessionsPerDay} sessions de terminal par jour.` };
     const mine = db.prepare(`SELECT COUNT(*) n FROM jobs WHERE user_id=? AND status IN ${ACTIVE}`).get(userId).n;
-    if (mine >= C.perUserConcurrent) return { error: "Une tâche est déjà en cours pour toi. Attends qu'elle se termine." };
+    if (mine >= C.perUserConcurrent) return { error: "Une session de terminal est déjà ouverte pour toi." };
     const all = db.prepare(`SELECT COUNT(*) n FROM jobs WHERE status IN ${ACTIVE}`).get().n;
     if (all >= C.globalConcurrent) return { error: "Serveur occupé, réessaie dans quelques minutes." };
-    const id = crypto.randomBytes(6).toString("hex");
-    const token = crypto.randomBytes(32).toString("hex");
+    const id = rand(6);
+    const token = rand(32);
     db.prepare(
       "INSERT INTO jobs (id,user_id,repo,base,instructions,token_hash,status,created_at,tier) VALUES (?,?,?,?,?,?,'queued',?,?)"
-    ).run(id, userId, repo, base || null, instructions, sha(token), Date.now(), tierOf(tier));
+    ).run(id, userId, "(terminal)", null, "session de terminal", sha(token), Date.now(), "aube");
     db.prepare("INSERT INTO usage (user_id,day,jobs) VALUES (?,?,1) ON CONFLICT(user_id,day) DO UPDATE SET jobs=jobs+1").run(userId, day);
     return { id, token };
   })();
 }
 
-const jobFromReq = (req) => {
-  const m = /^Bearer (\S+)$/.exec(req.headers.authorization || "");
-  return m ? db.prepare("SELECT * FROM jobs WHERE token_hash=?").get(sha(m[1])) || null : null;
-};
-
-// Filet de sécurité : tue les machines expirées ou orphelines.
-async function sweep() {
+async function openSession(userId) {
+  const r = reserveSession(userId);
+  if (r.error) return r;
+  const s = {
+    id: r.id,
+    userId,
+    createdAt: Date.now(),
+    lastUsed: Date.now(),
+    lastSeen: 0,
+    booted: false,
+    closed: false,
+    machineId: null,
+    queue: [], // commandes en attente d'être prises par le worker
+    cmds: new Set(), // toutes les commandes non terminées
+    poll: null, // requête /internal/next en attente
+    watches: new Map(), // id de commande -> requête /internal/watch en attente
+    cancelled: new Set(),
+    stuck: null, // commande annulée dont le worker n'a pas encore confirmé la mort
+    killTimer: null,
+    secrets: new Set(),
+    gh: "",
+    ghAt: 0,
+    cf: null,
+    cfAt: 0,
+  };
+  SESS.set(s.id, s);
   try {
-    const limitMs = (C.maxRuntimeSec + 60) * 1000;
-    for (const j of db.prepare(`SELECT id, machine_id, created_at FROM jobs WHERE status IN ${ACTIVE}`).all()) {
-      if (Date.now() - j.created_at > limitMs) {
-        if (j.machine_id) await killMachine(j.machine_id);
-        finish(j.id, "failed", "Délai maximum dépassé.");
-      }
-    }
-    const machines = await fly("GET", "/machines");
-    for (const m of machines) {
-      const id = m.config?.metadata?.job_id;
-      if (!id) continue;
-      const j = db.prepare("SELECT status FROM jobs WHERE id=?").get(id);
-      if (!j || !(j.status === "queued" || j.status === "running")) await killMachine(m.id);
-    }
+    const m = await fly("POST", "/machines", {
+      name: `job-${s.id}`,
+      region: C.region,
+      config: {
+        image: C.image,
+        auto_destroy: true,
+        restart: { policy: "no" },
+        guest: { cpu_kind: "shared", cpus: 1, memory_mb: C.memoryMb },
+        env: { JOB_TOKEN: r.token, ORCHESTRATOR_URL: C.publicUrl, MAX_RUNTIME_SEC: String(C.sessionMaxSec) },
+        metadata: { job_id: s.id, user_id: userId },
+      },
+    });
+    s.machineId = m.id;
+    db.prepare("UPDATE jobs SET machine_id=?, status='running' WHERE id=?").run(m.id, s.id);
   } catch (err) {
-    console.error("sweep:", err.message);
+    console.error("launch:", err.message);
+    await endSession(s, "failed", "Échec du démarrage du conteneur.", true);
+    db.prepare("UPDATE usage SET jobs=MAX(jobs-1,0) WHERE user_id=? AND day=?").run(userId, today());
+    return { error: "Impossible de démarrer le conteneur pour le moment." };
+  }
+  return { s };
+}
+
+async function endSession(s, status, summary, hard = false) {
+  if (s.closed) return;
+  s.closed = true;
+  SESS.delete(s.id);
+  clearTimeout(s.killTimer);
+  for (const c of [...s.cmds]) c.finish({ closed: true });
+  s.queue = [];
+  if (s.poll) {
+    clearTimeout(s.poll.timer);
+    try {
+      s.poll.res.json({ stop: true });
+    } catch {}
+    s.poll = null;
+  }
+  for (const res of s.watches.values()) {
+    try {
+      res.json({ cancel: true });
+    } catch {}
+  }
+  s.watches.clear();
+  finish(s.id, status, summary);
+  if (s.machineId) {
+    if (hard) await killMachine(s.machineId);
+    else setTimeout(() => killMachine(s.machineId), 3000); // laisse le worker se terminer proprement
   }
 }
-setInterval(sweep, 30000);
-sweep();
 
-// ---------------------------------------------------------------- serveur MCP (LibreChat)
+// Remet la prochaine commande au worker (avec les clés de la commande, jamais conservées côté worker).
+function takeNext(s) {
+  const c = s.queue.shift();
+  if (!c) return null;
+  c.taken = true;
+  return { cmd: { id: c.id, command: c.command, cwd: c.cwd, timeout: c.timeout }, env: c.env };
+}
+function wake(s) {
+  if (!s.poll) return;
+  const p = takeNext(s);
+  if (!p) return;
+  clearTimeout(s.poll.timer);
+  const res = s.poll.res;
+  s.poll = null;
+  res.json(p);
+}
+
+// ARRÊT : appelé quand le chat annule l'appel (Stop, connexion coupée) ou quand le délai est dépassé.
+function cancelCmd(s, c, why) {
+  if (c.done) return;
+  if (!c.taken) {
+    // jamais parti vers le conteneur : on la retire simplement de la file
+    c.finish({ cancelled: true, why });
+    return;
+  }
+  c.cancelRequested = true;
+  s.cancelled.add(c.id);
+  const w = s.watches.get(c.id);
+  if (w) {
+    s.watches.delete(c.id);
+    try {
+      w.json({ cancel: true }); // le worker tue aussitôt le groupe de processus (SIGTERM puis SIGKILL)
+    } catch {}
+  }
+  addActivity(s.id, "Arrêt demandé : commande interrompue");
+  s.stuck = c.id;
+  clearTimeout(s.killTimer);
+  // Filet de sécurité : si le worker ne confirme pas en 8 s, on détruit le conteneur.
+  s.killTimer = setTimeout(() => {
+    if (s.stuck && !s.closed) {
+      addActivity(s.id, "Conteneur arrêté de force");
+      endSession(s, "failed", "Session arrêtée de force (commande bloquée).", true);
+    }
+  }, 8000);
+  c.finish({ cancelled: true, why });
+}
+
+function runCommand(s, spec, signal, extra) {
+  return new Promise((resolve) => {
+    const c = { id: rand(4), ...spec, taken: false, done: false, cancelRequested: false };
+    s.cmds.add(c);
+    const progressToken = extra && extra._meta ? extra._meta.progressToken : undefined;
+    let ticks = 0;
+    const ping = setInterval(() => {
+      if (progressToken !== undefined && extra && extra.sendNotification) {
+        extra
+          .sendNotification({ method: "notifications/progress", params: { progressToken, progress: ++ticks, message: "commande en cours" } })
+          .catch(() => {});
+      }
+    }, 20000);
+    const onAbort = () => cancelCmd(s, c, "abort");
+    // Filet : le worker ne répond pas du tout (délai + marge)
+    const backstop = setTimeout(() => cancelCmd(s, c, "backstop"), (spec.timeout + 25) * 1000);
+    c.finish = (r) => {
+      if (c.done) return;
+      c.done = true;
+      clearInterval(ping);
+      clearTimeout(backstop);
+      signal.removeEventListener("abort", onAbort);
+      s.cmds.delete(c);
+      s.queue = s.queue.filter((x) => x !== c);
+      s.lastUsed = Date.now();
+      resolve(r);
+    };
+    s.lastUsed = Date.now();
+    s.queue.push(c);
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    wake(s);
+  });
+}
+
+// Clés passées à CHAQUE commande (GitHub et Cloudflare peuvent être connectés en cours de session).
+async function commandEnv(s, args, ghHeader, svcHeaders) {
+  const now = Date.now();
+  if (args.github_token || now - s.ghAt > 30000) {
+    s.gh = (await pickGithub(s.userId, args.github_token, ghHeader)) || "";
+    s.ghAt = now;
+  }
+  const svc = { ...svcHeaders, ...svcFromParams(args) };
+  if (!svc.CLOUDFLARE_API_TOKEN && now - s.cfAt > 120000) {
+    s.cf = await cloudflareEnv(s.userId);
+    s.cfAt = now;
+  }
+  const env = { ...svc };
+  if (s.cf && s.cf.env) Object.assign(env, s.cf.env);
+  if (s.gh) {
+    env.GH_TOKEN = s.gh;
+    env.GITHUB_TOKEN = s.gh;
+    env.GIT_CONFIG_COUNT = "1";
+    env.GIT_CONFIG_KEY_0 = "http.https://github.com/.extraheader";
+    env.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${s.gh}`).toString("base64")}`;
+  }
+  for (const v of Object.values(env)) if (typeof v === "string" && v.length >= 8) s.secrets.add(v);
+  return env;
+}
+
 const ok = (t) => ({ content: [{ type: "text", text: t }] });
 const ko = (t) => ({ content: [{ type: "text", text: t }], isError: true });
+const clip = (t, n = 12000) => (t.length > n ? `${t.slice(0, 3000)}\n...[tronqué]...\n${t.slice(-(n - 3000))}` : t);
 
-function buildServer(userId, ghHeader, svcHeaders, tier) {
-  const s = new McpServer({ name: "fly-sandboxes", version: "2.4.0" });
+// ------------------------------------------------------------------------------------ serveur MCP (LibreChat)
+function buildServer(userId, ghHeader, svcHeaders, reqSignal) {
+  const s = new McpServer(
+    { name: "fly-sandboxes", version: "3.0.0" },
+    {
+      instructions:
+        "Terminal Linux jetable. Tu le pilotes toi-même avec execute_command (une commande bash par appel, dossier /work). Si l'utilisateur clique sur Stop, la commande en cours est tuée immédiatement : ne la relance pas.",
+    }
+  );
 
   s.tool(
     "find_repos",
-    "Cherche parmi les dépôts GitHub de l'utilisateur (publics et privés) ceux qui ressemblent à un nom ou à des mots-clés, même approximatifs ou mal orthographiés. À appeler AVANT run_task dès que l'utilisateur ne donne pas le nom exact proprietaire/nom. Retourne une courte liste à proposer à l'utilisateur pour confirmation. Si l'utilisateur t'a envoyé un token GitHub dans le chat, passe-le dans github_token.",
+    "Cherche parmi les dépôts GitHub de l'utilisateur (publics et privés) ceux qui ressemblent à un nom ou à des mots-clés, même approximatifs ou mal orthographiés. À appeler AVANT de cloner dès que l'utilisateur ne donne pas le nom exact propriétaire/nom. Retourne une courte liste à proposer à l'utilisateur pour confirmation. Si l'utilisateur t'a envoyé un token GitHub dans le chat, passe-le dans github_token.",
     {
       query: z.string().min(2).max(100).describe("Nom approximatif ou mots-clés du projet, tels que l'utilisateur les a écrits"),
       github_token: tokenParam("Token GitHub envoyé par l'utilisateur dans le chat (seulement s'il n'a pas connecté son compte)"),
@@ -384,13 +511,13 @@ function buildServer(userId, ghHeader, svcHeaders, tier) {
     async ({ query, github_token }) => {
       const gh = await pickGithub(userId, github_token, ghHeader);
       if (!gh) return ko(githubMissing(userId, "find_repos"));
-      if (!findAllowed(userId)) return ko("Trop de recherches de dépôts d'affilée. Arrête de chercher : demande à l'utilisateur le nom exact (proprietaire/nom) et attends sa réponse.");
+      if (!findAllowed(userId)) {
+        return ko("Trop de recherches de dépôts d'affilée. Arrête de chercher : demande à l'utilisateur le nom exact (propriétaire/nom) et attends sa réponse.");
+      }
       try {
         const repos = await searchRepos(gh, query);
-        if (!repos.length) {
-          return ok(`Aucun dépôt ne ressemble à « ${query.slice(0, 100)} ». Demande à l'utilisateur de préciser le nom du projet.`);
-        }
-        return ok(JSON.stringify(repos) + "\nPropose ces dépôts à l'utilisateur et attends son choix : ne relance pas find_repos et ne cite pas d'autres projets.");
+        if (!repos.length) return ok(`Aucun dépôt ne ressemble à « ${query.slice(0, 100)} ». Demande à l'utilisateur de préciser le nom du projet.`);
+        return ok(`${JSON.stringify(repos)}\nPropose ces dépôts à l'utilisateur et attends son choix : ne relance pas find_repos et ne cite pas d'autres projets.`);
       } catch (err) {
         console.error("find_repos:", err.message);
         return ko("Impossible de lire les dépôts GitHub pour le moment. Si l'utilisateur a envoyé un token, il est peut-être invalide ou sans accès à ses dépôts.");
@@ -399,93 +526,151 @@ function buildServer(userId, ghHeader, svcHeaders, tier) {
   );
 
   s.tool(
-    "run_task",
-    "Exécute une tâche de développement ou de déploiement dans un conteneur Linux isolé et jetable : clone d'un dépôt GitHub (ou création d'un nouveau projet), vérifications automatiques, correction des erreurs une à la fois par l'IA, commandes (Vercel, Cloudflare, Render, Fly...), push et pull request. Appeler UNE seule fois ; retourne un job_id tout de suite, puis suivre avec get_job. Ne pas lire les fichiers soi-même. Le nom du dépôt doit être exact : s'il ne l'est pas, appeler find_repos d'abord. Clés de services : si la tâche demande Vercel, Cloudflare, Render ou Fly.io, demande à l'utilisateur de générer sa clé (token) sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre correspondant. Ne demande que les clés dont la tâche a besoin.",
+    "execute_command",
+    "Exécute UNE commande bash dans un terminal Linux isolé et jetable (le conteneur s'ouvre tout seul à la première commande et reste ouvert entre les appels : fichiers et dépôts clonés persistent dans /work). Chaque appel démarre un bash neuf depuis /work : utilise cwd ou « cd dossier && ... » (le cd ne persiste pas). Tout se fait par commandes : git clone, cat/sed/heredoc pour lire et écrire des fichiers, npm install, tests, build, déploiements, git commit/push. GitHub est préconfiguré (git clone/push sur les dépôts de l'utilisateur, sans token à écrire). Les clés de services (Cloudflare, etc.) sont déjà dans l'environnement : ne les affiche jamais. Lis chaque résultat avant la commande suivante, une étape à la fois. Si l'utilisateur clique sur Stop, la commande en cours est tuée immédiatement.",
     {
-      repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional().describe("Dépôt existant : proprietaire/nom"),
-      new_repo_name: z.string().regex(/^[\w.-]{1,100}$/).optional().describe("Nom d'un NOUVEAU dépôt privé à créer (au lieu de repo)"),
-      instructions: z.string().min(10).max(4000).describe("Ce qu'il faut faire : bug à corriger, projet à créer, déploiement à lancer"),
-      base_branch: z.string().max(100).regex(/^[\w./-]+$/).optional(),
-      github_token: tokenParam("Token GitHub envoyé dans le chat (seulement si l'utilisateur n'a pas connecté son compte GitHub)"),
-      vercel_token: tokenParam("Clé Vercel envoyée par l'utilisateur dans le chat, si la tâche déploie sur Vercel"),
-      cloudflare_token: tokenParam("Clé Cloudflare envoyée par l'utilisateur dans le chat, si la tâche utilise Cloudflare"),
-      render_key: tokenParam("Clé Render envoyée par l'utilisateur dans le chat, si la tâche utilise Render"),
-      fly_token: tokenParam("Clé Fly.io envoyée par l'utilisateur dans le chat, si la tâche utilise Fly.io"),
+      command: z.string().min(1).max(8000).describe("La commande bash à exécuter (une étape à la fois)"),
+      cwd: z
+        .string()
+        .max(200)
+        .regex(/^[\w.\-/]*$/)
+        .optional()
+        .describe("Sous-dossier de /work où lancer la commande, par exemple le nom du dépôt cloné"),
+      timeout_seconds: z.number().int().min(1).max(C.cmdMaxSec).optional().describe(`Durée maximale en secondes (défaut ${C.cmdDefaultSec}, max ${C.cmdMaxSec}). Au-delà, la commande est tuée.`),
+      github_token: tokenParam("Token GitHub envoyé par l'utilisateur dans le chat (seulement s'il n'a pas connecté son compte)"),
+      vercel_token: tokenParam("Clé Vercel envoyée par l'utilisateur dans le chat, si la commande déploie sur Vercel"),
+      cloudflare_token: tokenParam("Clé Cloudflare envoyée par l'utilisateur dans le chat, en dernier recours"),
+      render_key: tokenParam("Clé Render envoyée par l'utilisateur dans le chat, si la commande utilise Render"),
+      fly_token: tokenParam("Clé Fly.io envoyée par l'utilisateur dans le chat, si la commande utilise Fly.io"),
     },
-    async (args) => {
-      const { repo, new_repo_name, instructions, base_branch } = args;
-      if (!repo && !new_repo_name) return ko("Indique repo (dépôt existant) ou new_repo_name (nouveau projet).");
-      // Le compte GitHub connecté via LibreChat passe en premier ; sinon le token envoyé dans le chat.
-      const gh = await pickGithub(userId, args.github_token, ghHeader);
-      if (!gh) return ko(githubMissing(userId, "run_task"));
-      // Les clés envoyées dans le chat priment sur d'éventuels en-têtes.
-      const svc = { ...svcHeaders, ...svcFromParams(args) };
-      const r = reserveJob(userId, repo || `(nouveau)/${new_repo_name}`, base_branch, instructions, tier);
-      if (r.error) return ko(r.error);
-      creds.set(r.id, { ghToken: gh, repo: repo || null, newRepo: new_repo_name || null, base: base_branch || null, instructions, svc, exp: Date.now() + 5 * 60000 });
-      try {
-        await launch(r.id, userId, r.token);
-      } catch (err) {
-        console.error("launch:", err.message);
-        finish(r.id, "failed", "Échec du démarrage du conteneur.");
-        db.prepare("UPDATE usage SET jobs=MAX(jobs-1,0) WHERE user_id=? AND day=?").run(userId, today());
-        return ko("Impossible de démarrer le conteneur pour le moment.");
+    async (args, extra) => {
+      // Un seul signal d'annulation : arrêt MCP du chat OU connexion HTTP coupée.
+      const signal = AbortSignal.any([reqSignal, ...(extra && extra.signal ? [extra.signal] : [])]);
+      if (signal.aborted) return ko("Annulé.");
+      const command = String(args.command || "").trim();
+      if (!command) return ko("command est vide.");
+      const cwd = String(args.cwd || "");
+      if (cwd.split("/").includes("..")) return ko("cwd invalide.");
+      const timeout = Math.min(Math.max(Math.floor(Number(args.timeout_seconds) || C.cmdDefaultSec), 1), C.cmdMaxSec);
+
+      let sess = userSession(userId);
+      let fresh = false;
+      if (!sess) {
+        const o = await openSession(userId);
+        if (o.error) return ko(o.error);
+        sess = o.s;
+        fresh = true;
       }
-      return ok(`Tâche ${r.id} lancée. Le conteneur se détruit seul à la fin. Un panneau de suivi en direct s'affiche déjà sous ton message : n'écris pas les étapes. Écris seulement une phrase courte du genre « Travail en cours, patiente un peu, je te fais le retour dès que c'est fini. », puis appelle get_job (job_id=${r.id}, wait_seconds=${C.maxWait}) en boucle, sans écrire de texte entre les appels, tant que le statut est running. Quand il est success ou failed, donne le résultat.`);
+      const sx = sess;
+      const abandon = async () => {
+        if (fresh) await endSession(sx, "success", "Annulée avant la première commande.", true);
+        return ko("Annulé.");
+      };
+      if (signal.aborted) return abandon();
+      const env = await commandEnv(sx, args, ghHeader, svcHeaders);
+      if (signal.aborted) return abandon();
+
+      addActivity(sx.id, `$ ${scrubWith(sx.secrets, command).slice(0, 150)}`);
+      const r = await runCommand(sx, { command, cwd, timeout, env }, signal, extra);
+
+      if (r.cancelled) return ko("Commande interrompue : arrêt demandé, le processus a été tué. Ne la relance pas sauf si l'utilisateur le demande.");
+      if (r.closed) return ko("La session de terminal s'est fermée pendant la commande. La prochaine commande en ouvrira une nouvelle (les fichiers sont perdus).");
+      const out = clip(scrubWith(sx.secrets, r.out || "")).trim();
+      addActivity(sx.id, `→ code ${r.timedOut ? "délai dépassé" : r.code}`);
+
+      let head = r.timedOut ? `Délai dépassé (${timeout} s), processus tué.` : `code ${r.code === null || r.code === undefined ? `signal ${r.signal}` : r.code}`;
+      let note = "";
+      if (fresh) {
+        const parts = [`Tâche ${sx.id} lancée. Session de terminal ouverte (conteneur jetable, dossier /work).`];
+        parts.push(sx.gh ? "GitHub connecté." : "GitHub non connecté (utile seulement si la tâche touche un dépôt).");
+        if (sx.cf && sx.cf.env) parts.push(CF_DEPLOY_NOTE);
+        else parts.push(sx.cf && sx.cf.invalid ? CF_INVALID_NOTE : CF_MISSING_NOTE);
+        note = `${parts.join(" ")}\n`;
+      }
+      let hint = "";
+      if (!sx.gh && /could not read Username|Authentication failed|terminal prompts disabled|Repository not found/i.test(out)) {
+        hint = `\n\n${githubMissing(userId, "la commande")}`;
+      }
+      return ok(`${note}${head}\n${out || "(aucune sortie)"}${hint}`);
     }
   );
+
+  s.tool("close_session", "Ferme le terminal et détruit le conteneur (les fichiers sont perdus). À appeler quand le travail est terminé. Facultatif : il se ferme aussi tout seul après 10 minutes sans commande.", {}, async () => {
+    const sess = userSession(userId);
+    if (!sess) return ok("Aucune session ouverte.");
+    await endSession(sess, "success", "Session fermée.");
+    return ok("Session fermée, conteneur détruit.");
+  });
+
+  s.tool("my_quota", "Sessions de terminal restantes pour l'utilisateur aujourd'hui.", {}, async () => {
+    const u = db.prepare("SELECT jobs FROM usage WHERE user_id=? AND day=?").get(userId, today()) || { jobs: 0 };
+    const sess = userSession(userId);
+    return ok(
+      JSON.stringify({
+        sessions_restantes: Math.max(C.sessionsPerDay - u.jobs, 0),
+        session_ouverte: Boolean(sess),
+        fermeture_automatique_apres_s: C.idleSec,
+        duree_max_commande_s: C.cmdMaxSec,
+      })
+    );
+  });
 
   s.tool(
-    "get_job",
-    `Statut d'une tâche (running, success, failed), résumé (Corrigé / Reste à faire), branche, lien de la pull request et tokens consommés. Avec wait_seconds (${C.maxWait} au plus), attend la fin de la tâche avant de répondre. Tant que la tâche tourne, la réponse est volontairement minimale : les étapes sont dans le panneau en direct.`,
+    "link_pages",
+    "Relie un dépôt GitHub de l'utilisateur à Cloudflare Pages : chaque push sur la branche principale republie le site automatiquement. À appeler après un push réussi qui a créé ou modifié un site. L'utilisateur n'a rien à fournir : Cloudflare doit seulement être connecté.",
     {
-      job_id: z.string().regex(/^[a-f0-9]{12}$/),
-      wait_seconds: z.number().int().min(0).max(C.maxWait).optional(),
+      repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).describe("Dépôt GitHub : propriétaire/nom"),
+      project_name: z.string().max(58).optional().describe("Nom du site (lettres minuscules, chiffres, tirets) ; par défaut le nom du dépôt"),
+      build_command: z.string().max(200).optional().describe("Commande de build, par défaut npm run build"),
+      output_dir: z.string().max(100).optional().describe("Dossier de sortie du build, par défaut dist"),
     },
-    async ({ job_id, wait_seconds }, extra) => {
-      const deadline = Date.now() + (wait_seconds || 0) * 1000;
-      // Pendant une longue attente, un signal de vie toutes les 20 s garde la connexion ouverte
-      // (et remet à zéro le délai du client MCP s'il le gère). Sans effet si le client n'en demande pas.
-      const progressToken = extra?._meta?.progressToken;
-      let lastPing = Date.now();
-      let ticks = 0;
-      let j;
-      for (;;) {
-        j = db.prepare("SELECT * FROM jobs WHERE id=? AND user_id=?").get(job_id, userId);
-        if (!j) return ko("Tâche introuvable.");
-        if (!(j.status === "queued" || j.status === "running") || Date.now() >= deadline) break;
-        if (progressToken !== undefined && extra?.sendNotification && Date.now() - lastPing >= 20000) {
-          lastPing = Date.now();
-          try {
-            await extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress: ++ticks, message: "tâche en cours" } });
-          } catch {}
+    async ({ repo, project_name, build_command, output_dir }) => {
+      const [owner, name] = repo.split("/");
+      try {
+        const r = await fetch(`${C.libreUrl}/api/cloudflare-link/pages/project`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${C.secret}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user: userId,
+            owner,
+            repo: name,
+            name: project_name || name,
+            build_command: build_command || undefined,
+            destination_dir: output_dir || undefined,
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok) {
+          return ok(
+            JSON.stringify({
+              site: d.url,
+              projet: d.project,
+              republie_a_chaque_modification: d.auto_deploy_on_push !== false,
+              premier_build_lance: Boolean(d.first_build_started),
+              consigne: "Donne l'adresse du site en une phrase. Le premier build peut prendre une ou deux minutes.",
+            })
+          );
         }
-        await new Promise((r) => setTimeout(r, 2000));
+        if (d.error === "cloudflare_not_connected" || d.reconnect) {
+          return ko("Cloudflare n'est pas connecté (ou le jeton n'est plus valide). Écris une phrase courte puis affiche exactement ce lien Markdown : [Connecter Cloudflare](#cloudflare-connect). Quand l'utilisateur a terminé, rappelle link_pages.");
+        }
+        if (d.error === "github_app_missing") {
+          return ko(`Cloudflare doit avoir accès au dépôt GitHub (une seule fois). Dis-le en une phrase et affiche ce lien tel quel : [Autoriser Cloudflare sur GitHub](${d.authorize_url || "https://dash.cloudflare.com"}). Quand c'est fait, rappelle link_pages.`);
+        }
+        if (d.error === "rate_limited") return ko("Cloudflare demande de patienter un instant. Dis-le en une phrase et rappelle link_pages dans une minute.");
+        return ko(`Cloudflare : ${String(d.message || "erreur").slice(0, 300)}`);
+      } catch (err) {
+        console.error("link_pages:", err.message);
+        return ko("Cloudflare est injoignable pour le moment.");
       }
-      const running = j.status === "queued" || j.status === "running";
-      // Tâche en cours : réponse minimale (peu de tokens à relire à chaque rappel).
-      if (running) {
-        return ok(JSON.stringify({ job_id: j.id, status: j.status, consigne: `Toujours en cours : n'écris rien, rappelle get_job avec wait_seconds=${C.maxWait}. Le panneau en direct montre déjà les étapes.` }));
-      }
-      return ok(JSON.stringify({ job_id: j.id, repo: j.repo, status: j.status, summary: j.summary, branch: j.branch, pull_request: j.pr_url, tokens_used: j.tokens_used, cout_usd: Number((j.cost_micro / 1e6).toFixed(3)) }));
     }
   );
-
-  s.tool("my_quota", "Quotas restants de l'utilisateur pour aujourd'hui.", {}, async () => {
-    const u = db.prepare("SELECT tokens, jobs FROM usage WHERE user_id=? AND day=?").get(userId, today()) || { tokens: 0, jobs: 0 };
-    return ok(JSON.stringify({
-      jobs_restants: Math.max(C.jobsPerDay - u.jobs, 0),
-      tokens_restants: Math.max(C.tokensPerDay - u.tokens, 0),
-      tokens_max_par_tache: C.tokensPerJob,
-      depense_du_mois_usd: Number((monthSpend(userId) / 1e6).toFixed(2)),
-      plafond_du_mois_usd: capMicro(tier) / 1e6,
-    }));
-  });
 
   return s;
 }
 
-// ---------------------------------------------------------------- HTTP
+// ------------------------------------------------------------------------------------ HTTP
 const app = express();
 app.disable("x-powered-by");
 app.get("/healthz", (_req, res) => res.json({ ok: true }));
@@ -499,8 +684,7 @@ function mcpAuth(req, res, next) {
   next();
 }
 
-// Suivi en direct pour l'interface LibreChat (route /api/sandbox-job) : même identité que le serveur MCP,
-// un utilisateur ne voit que ses propres tâches.
+// Suivi en direct pour l'interface LibreChat (route /api/sandbox-job) : un utilisateur ne voit que ses sessions.
 app.get("/jobs/:id", mcpAuth, (req, res) => {
   if (!/^[a-f0-9]{12}$/.test(req.params.id)) return res.status(400).json({ error: "tâche invalide" });
   const j = db.prepare("SELECT * FROM jobs WHERE id=? AND user_id=?").get(req.params.id, req.userId);
@@ -515,7 +699,7 @@ app.get("/jobs/:id", mcpAuth, (req, res) => {
     branch: j.branch,
     pull_request: j.pr_url,
     tokens_used: j.tokens_used,
-    cost_usd: Number((j.cost_micro / 1e6).toFixed(3)),
+    cost_usd: 0,
     tier: j.tier,
     activity: String(j.activity || "").split("\n").filter(Boolean).slice(-40),
     created_at: j.created_at,
@@ -523,10 +707,39 @@ app.get("/jobs/:id", mcpAuth, (req, res) => {
   });
 });
 
+// Arrêt explicite (en plus de l'annulation MCP) : tue la commande en cours de cet utilisateur.
+app.post("/sessions/cancel", mcpAuth, (req, res) => {
+  const s = userSession(req.userId);
+  let n = 0;
+  if (s) {
+    for (const c of [...s.cmds]) {
+      cancelCmd(s, c, "abort");
+      n += 1;
+    }
+  }
+  res.json({ cancelled: n });
+});
+
 app.post("/mcp", mcpAuth, express.json({ limit: "1mb" }), async (req, res) => {
-  const server = buildServer(req.userId, String(req.headers["x-github-token"] || ""), svcFrom(req.headers), tierOf(req.query.tier));
+  const msgs = Array.isArray(req.body) ? req.body : [req.body];
+  // En mode sans état, la notification « cancelled » du client arrive dans UNE AUTRE requête HTTP que
+  // l'appel d'outil : on la relie ici à l'appel en cours pour l'annuler.
+  for (const m of msgs) {
+    if (m && m.method === "notifications/cancelled" && m.params && m.params.requestId !== undefined) {
+      const ctlOther = INFLIGHT.get(`${req.userId}:${m.params.requestId}`);
+      if (ctlOther) ctlOther.abort();
+    }
+  }
+  const ctl = new AbortController();
+  const keys = msgs.filter((m) => m && m.method === "tools/call" && m.id !== undefined).map((m) => `${req.userId}:${m.id}`);
+  for (const k of keys) INFLIGHT.set(k, ctl);
+
+  const server = buildServer(req.userId, String(req.headers["x-github-token"] || ""), svcFrom(req.headers), ctl.signal);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", () => {
+    for (const k of keys) if (INFLIGHT.get(k) === ctl) INFLIGHT.delete(k);
+    // Connexion coupée avant la fin de la réponse (Stop, fermeture de l'appli) : annule la commande.
+    if (!res.writableFinished) ctl.abort();
     transport.close();
     server.close();
   });
@@ -540,121 +753,135 @@ app.post("/mcp", mcpAuth, express.json({ limit: "1mb" }), async (req, res) => {
 });
 app.all("/mcp", (_req, res) => res.status(405).json({ error: "méthode non autorisée" }));
 
-// --- routes internes (worker)
-app.get("/internal/job", (req, res) => {
-  const job = jobFromReq(req);
-  if (!job) return res.status(401).json({ error: "jeton invalide" });
-  const c = creds.get(job.id);
-  if (!c || c.exp < Date.now()) return res.status(410).json({ error: "identifiants expirés" });
-  creds.delete(job.id);
-  res.json({ id: job.id, repo: c.repo, newRepo: c.newRepo, base: c.base, instructions: c.instructions, ghToken: c.ghToken, svc: c.svc, tier: tierOf(job.tier) });
-});
-
-// Journal d'activité : une ligne courte par action du conteneur, lue ensuite par get_job.
-app.post("/internal/progress", express.json({ limit: "16kb" }), (req, res) => {
-  const job = jobFromReq(req);
-  if (!job) return res.status(401).json({ error: "jeton invalide" });
-  const line = String(req.body?.line || "").replace(/\s+/g, " ").trim().slice(0, 200);
-  if (line && (job.status === "queued" || job.status === "running")) {
-    const next = (job.activity ? `${job.activity}\n` : "") + line;
-    db.prepare("UPDATE jobs SET activity=? WHERE id=?").run(next.slice(-3000), job.id);
+// --- routes internes (worker du conteneur) : le worker appelle l'orchestrateur, jamais l'inverse
+function sessFromReq(req) {
+  const m = /^Bearer (\S+)$/.exec(req.headers.authorization || "");
+  if (!m) return null;
+  const j = db.prepare("SELECT id FROM jobs WHERE token_hash=?").get(sha(m[1]));
+  const s = j ? SESS.get(j.id) : null;
+  if (s) {
+    s.lastSeen = Date.now();
+    s.booted = true;
   }
-  res.json({ ok: true });
-});
+  return s || null;
+}
 
-app.post("/internal/llm/chat/completions", express.json({ limit: "4mb" }), async (req, res) => {
-  const job = jobFromReq(req);
-  if (!job) return res.status(401).json({ error: "jeton invalide" });
-  if (!(job.status === "queued" || job.status === "running")) return res.status(409).json({ error: "tâche terminée" });
-  const maxOut = Math.min(Number(req.body.max_tokens) || 4096, 4096);
-  const day = db.prepare("SELECT tokens FROM usage WHERE user_id=? AND day=?").get(job.user_id, today())?.tokens || 0;
-  if (job.tokens_used + maxOut > C.tokensPerJob) return res.status(429).json({ error: "budget de tokens de la tâche épuisé" });
-  if (day + maxOut > C.tokensPerDay) return res.status(429).json({ error: "budget de tokens du jour épuisé" });
-  if (monthSpend(job.user_id) >= capMicro(job.tier)) return res.status(429).json({ error: "budget du mois épuisé" });
-  try {
-    const r = await fetch(`${C.llmBase}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${C.llmKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: C.llmModel,
-        messages: req.body.messages,
-        tools: req.body.tools,
-        tool_choice: req.body.tool_choice,
-        temperature: 0.2,
-        max_tokens: maxOut,
-        stream: false,
-        ...(C.llmBase.includes("openrouter.ai") ? { usage: { include: true } } : {}),
-        ...(C.llmBase.includes("openrouter.ai") && C.llmReasoning ? { reasoning: C.llmReasoning === "none" ? { enabled: false } : { effort: C.llmReasoning } } : {}),
-      }),
-      signal: AbortSignal.timeout(120000),
-    });
-    const data = await r.json().catch(() => ({}));
-    // Journal : où partent les tokens (entrée, cache, sortie, réflexion, coût) pour chaque requête. Voir `fly logs`.
+// Le worker attend ici sa prochaine commande (requête longue de 20 s au plus).
+app.get("/internal/next", (req, res) => {
+  const s = sessFromReq(req);
+  if (!s) return res.status(401).json({ error: "jeton invalide" });
+  if (s.closed) return res.json({ stop: true });
+  if (s.stuck) {
+    s.stuck = null; // le worker est revenu : la commande annulée est bien morte
+    clearTimeout(s.killTimer);
+  }
+  if (s.poll) {
+    clearTimeout(s.poll.timer);
     try {
-      const u = data.usage || {};
-      console.log(`llm job=${job.id} tier=${job.tier} in=${u.prompt_tokens ?? "?"} cached=${u.prompt_tokens_details?.cached_tokens ?? 0} out=${u.completion_tokens ?? "?"} think=${u.completion_tokens_details?.reasoning_tokens ?? 0} cost=${u.cost ?? "?"} status=${r.status}`);
+      s.poll.res.json({ idle: true });
     } catch {}
-    const used = Number(data.usage?.total_tokens) || Math.ceil(JSON.stringify(req.body.messages || []).length / 3) + maxOut;
-    record(job, used, costMicro(data.usage, C.priceIn, C.priceOut, used), false);
-    res.status(r.status).json(data);
-  } catch (err) {
-    console.error("llm:", err.message);
-    res.status(502).json({ error: "erreur du fournisseur LLM" });
+    s.poll = null;
   }
-});
-
-// Soleil : le modèle de travail, bloqué, demande des instructions à un modèle plus fort (peu de consultations,
-// messages courts, dépense comptée dans le budget du mois).
-const EXPERT_SYSTEM =
-  "Tu es un ingénieur senior qui conseille un autre agent de code, moins fort, bloqué sur une erreur. Réponds en français par six instructions numérotées au plus, courtes et précises : cause probable, fichier et ligne, modification exacte à faire (extrait avant puis après), puis comment vérifier. N'écris jamais un fichier entier. Pas d'introduction.";
-app.post("/internal/llm/expert", express.json({ limit: "256kb" }), async (req, res) => {
-  const job = jobFromReq(req);
-  if (!job) return res.status(401).json({ error: "jeton invalide" });
-  if (!(job.status === "queued" || job.status === "running")) return res.status(409).json({ error: "tâche terminée" });
-  if (tierOf(job.tier) !== "soleil") return res.status(403).json({ error: "expert indisponible avec ce modèle" });
-  if (job.expert_calls >= C.expertMaxPerJob) return res.status(429).json({ error: "nombre maximum de consultations de l'expert atteint pour cette tâche" });
-  if (monthSpend(job.user_id) >= capMicro(job.tier)) return res.status(429).json({ error: "budget du mois épuisé" });
-  const question = String(req.body?.question || "").slice(0, 4000);
-  const context = String(req.body?.context || "").slice(0, 9000);
-  if (!question) return res.status(400).json({ error: "question vide" });
-  try {
-    const r = await fetch(`${C.expertBase}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${C.expertKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: C.expertModel,
-        messages: [
-          { role: "system", content: EXPERT_SYSTEM },
-          { role: "user", content: `${question}\n\n${context}` },
-        ],
-        temperature: 0.2,
-        max_tokens: 1200,
-        stream: false,
-        ...(C.expertBase.includes("openrouter.ai") ? { usage: { include: true } } : {}),
-      }),
-      signal: AbortSignal.timeout(120000),
-    });
-    const data = await r.json().catch(() => ({}));
-    const advice = String(data.choices?.[0]?.message?.content || "").trim();
-    if (data.usage) {
-      const used = Number(data.usage.total_tokens) || 0;
-      record(job, used, costMicro(data.usage, C.expertPriceIn, C.expertPriceOut, used), true);
+  const p = takeNext(s);
+  if (p) return res.json(p);
+  const timer = setTimeout(() => {
+    if (s.poll && s.poll.res === res) {
+      s.poll = null;
+      res.json({ idle: true });
     }
-    if (!r.ok || !advice) return res.status(502).json({ error: "l'expert n'a pas répondu" });
-    res.json({ advice: advice.slice(0, 4000) });
-  } catch (err) {
-    console.error("expert:", err.message);
-    res.status(502).json({ error: "erreur du fournisseur de l'expert" });
-  }
+  }, 20000);
+  s.poll = { res, timer };
+  res.on("close", () => {
+    if (s.poll && s.poll.res === res) {
+      clearTimeout(timer);
+      s.poll = null;
+    }
+  });
 });
 
-app.post("/internal/result", express.json({ limit: "256kb" }), (req, res) => {
-  const job = jobFromReq(req);
-  if (!job) return res.status(401).json({ error: "jeton invalide" });
-  const { status, summary, branch, pr_url } = req.body || {};
-  finish(job.id, status === "success" ? "success" : "failed", summary, { branch, pr_url });
-  res.json({ ok: true });
-  if (job.machine_id) setTimeout(() => killMachine(job.machine_id), 20000);
+// Pendant une commande, le worker écoute ici : la réponse { cancel: true } part dès le clic sur Stop.
+app.get("/internal/watch/:cid", (req, res) => {
+  const s = sessFromReq(req);
+  if (!s) return res.status(401).json({ error: "jeton invalide" });
+  const cid = String(req.params.cid);
+  if (s.cancelled.has(cid)) return res.json({ cancel: true });
+  const c = [...s.cmds].find((x) => x.id === cid);
+  if (!c || c.done) return res.json({ cancel: false, done: true });
+  const old = s.watches.get(cid);
+  if (old) {
+    try {
+      old.json({ cancel: false });
+    } catch {}
+  }
+  const timer = setTimeout(() => {
+    if (s.watches.get(cid) === res) {
+      s.watches.delete(cid);
+      res.json({ cancel: false });
+    }
+  }, 20000);
+  s.watches.set(cid, res);
+  res.on("close", () => {
+    clearTimeout(timer);
+    if (s.watches.get(cid) === res) s.watches.delete(cid);
+  });
 });
+
+app.post("/internal/cmd/:cid", express.json({ limit: "256kb" }), (req, res) => {
+  const s = sessFromReq(req);
+  if (!s) return res.status(401).json({ error: "jeton invalide" });
+  const cid = String(req.params.cid);
+  s.cancelled.delete(cid);
+  if (s.stuck === cid) {
+    s.stuck = null;
+    clearTimeout(s.killTimer);
+  }
+  const w = s.watches.get(cid);
+  if (w) {
+    s.watches.delete(cid);
+    try {
+      w.json({ cancel: false, done: true });
+    } catch {}
+  }
+  const c = [...s.cmds].find((x) => x.id === cid);
+  const b = req.body || {};
+  if (c && !c.done) {
+    c.finish({ code: b.code, signal: b.signal, timedOut: Boolean(b.timedOut), out: String(b.out || "") });
+  }
+  res.json({ ok: true });
+});
+
+// Filet de sécurité : sessions inactives ou trop longues, conteneurs morts ou orphelins.
+async function sweep() {
+  try {
+    const now = Date.now();
+    for (const s of [...SESS.values()]) {
+      if (s.closed) continue;
+      if (s.cmds.size === 0 && now - s.lastUsed > C.idleSec * 1000) {
+        await endSession(s, "success", "Session inactive fermée.");
+      } else if (now - s.createdAt > C.sessionMaxSec * 1000) {
+        await endSession(s, "failed", "Durée maximale de session atteinte.", true);
+      } else if (!s.booted && now - s.createdAt > 120000) {
+        await endSession(s, "failed", "Le conteneur n'a pas démarré.", true);
+      } else if (s.booted && now - s.lastSeen > 90000) {
+        await endSession(s, "failed", "Le conteneur ne répond plus.", true);
+      }
+    }
+    for (const j of db.prepare(`SELECT id, machine_id FROM jobs WHERE status IN ${ACTIVE}`).all()) {
+      if (!SESS.has(j.id)) {
+        if (j.machine_id) await killMachine(j.machine_id);
+        finish(j.id, "failed", "Session interrompue.");
+      }
+    }
+    const machines = await fly("GET", "/machines");
+    for (const m of machines) {
+      const id = m.config && m.config.metadata ? m.config.metadata.job_id : null;
+      if (id && !SESS.has(id)) await killMachine(m.id);
+    }
+  } catch (err) {
+    console.error("sweep:", err.message);
+  }
+}
+setInterval(sweep, 30000);
+sweep();
 
 app.listen(C.port, "0.0.0.0", () => console.log(`Orchestrateur prêt sur :${C.port}`));
