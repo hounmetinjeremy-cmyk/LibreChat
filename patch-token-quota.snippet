@@ -41,8 +41,55 @@ async function quotaLeft(user) {
   }
 }
 
+/**
+ * Rythme : le quota du jour (5 000 000) doit durer environ 18 heures, soit 4 630 tokens par minute, et non être
+ * dépensé en 6 heures. Chaque utilisateur a un seau qui se remplit de PACE_TOKENS_PER_MIN (4630) par minute, jusqu'à
+ * PACE_BURST_TOKENS (150 000, soit une trentaine de minutes de réserve). Chaque réponse y retire les tokens comptés.
+ * Seau vide : l'appel suivant attend (jusqu'à PACE_MAX_WAIT_SEC, 20 s), sinon le chat répond 429 avec la durée de pause.
+ * PACE=off désactive. L'état est en mémoire : il repart plein au redémarrage de LibreChat.
+ */
+const paceNum = (name, def, min) => {
+  const n = Number(process.env[name] ?? def);
+  return Number.isFinite(n) && n >= min ? n : def;
+};
+const paceState = new Map();
+
+function paceLevel(user, now) {
+  const burst = paceNum('PACE_BURST_TOKENS', 150000, 1);
+  const s = paceState.get(user) || { level: burst, at: now };
+  return { level: Math.min(burst, s.level + ((now - s.at) / 60000) * paceNum('PACE_TOKENS_PER_MIN', 4630, 1)), at: now };
+}
+
+/** Avant un appel au modèle : null si l'appel peut partir (après une courte attente si besoin), sinon un message de pause. */
+async function paceGate(user) {
+  if (!user || process.env.PACE === 'off') {
+    return null;
+  }
+  const s = paceLevel(user, Date.now());
+  paceState.set(user, s);
+  if (s.level >= 0) {
+    return null;
+  }
+  const waitMs = Math.ceil((-s.level / paceNum('PACE_TOKENS_PER_MIN', 4630, 1)) * 60000);
+  if (waitMs <= paceNum('PACE_MAX_WAIT_SEC', 20, 0) * 1000) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    return null;
+  }
+  return `Pause technique : le quota du jour est réparti sur la journée pour durer. Reprise automatique dans environ ${Math.ceil(waitMs / 60000)} min.`;
+}
+
+/** Après une réponse : retire du seau les tokens comptés. */
+function paceDebit(user, tokens) {
+  if (!user || !(tokens > 0) || process.env.PACE === 'off') {
+    return;
+  }
+  const s = paceLevel(user, Date.now());
+  paceState.set(user, { level: s.level - tokens, at: s.at });
+}
+
 /** Envoie les tokens consommés à l'orchestrateur, sans attendre sa réponse. */
 function reportTokens(user, tokens) {
+  paceDebit(user, tokens);
   if (!user || !(tokens > 0) || !orchBase() || !process.env.ORCHESTRATOR_SECRET) {
     return;
   }

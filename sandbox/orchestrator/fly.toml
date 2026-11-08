@@ -21,7 +21,8 @@ primary_region = 'ams'
   DAILY_JOBS_PER_USER = '1000'   # public : 50
   TOKENS_PER_JOB = '3000000'     # public : 1000000
   # Quota de tokens du chat par utilisateur et par jour (compté par LibreChat, voir src/patch-quota.js).
-  TOKENS_PER_USER_DAY = '3000000'
+  # 5 millions, répartis sur environ 18 h (4 630 par minute) par le rythme de LibreChat (patch-token-quota.snippet).
+  TOKENS_PER_USER_DAY = '5000000'
   # Dépense : plafond par utilisateur et par mois, en dollars, selon le modèle choisi (Aube ou Soleil).
   # Public : 7.5 (Aube, abonnement 15 $) et 15 (Soleil, abonnement 30 $), soit la moitié du prix.
   MONTHLY_SPEND_CAP_AUBE = '1000'
