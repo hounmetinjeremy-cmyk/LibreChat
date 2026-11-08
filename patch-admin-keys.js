@@ -1,6 +1,9 @@
 /**
  * Branche la page admin « /admin-config » et le chargement des clés dans api/server/index.js.
  * Si une ancre est introuvable, le build échoue volontairement (l'ancienne version reste en ligne).
+ * OpenRouter (Relace) : patch-openrouter.js, appliqué ci-dessous.
+ * Quota de tokens du jour par utilisateur : patch-token-quota.js (jamais bloquant).
+ * Allègement de l'historique envoyé au modèle (anciennes sorties d'outils) : patch-history.js.
  */
 require('./patch-google-link.js');
 require('./patch-identity.js');
@@ -13,6 +16,8 @@ require('./patch-token-balance.js');
 require('./patch-agent-behavior.js');
 require('./patch-jeremy-code.js');
 require('./patch-openrouter.js');
+require('./patch-cloudflare-link.js');
+require('./patch-token-quota.js');
 require('./patch-history.js');
 
 const fs = require('fs');
