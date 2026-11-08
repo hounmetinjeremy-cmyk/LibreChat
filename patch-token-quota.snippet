@@ -42,54 +42,89 @@ async function quotaLeft(user) {
 }
 
 /**
- * Rythme : le quota du jour (5 000 000) doit durer environ 18 heures, soit 4 630 tokens par minute, et non être
- * dépensé en 6 heures. Chaque utilisateur a un seau qui se remplit de PACE_TOKENS_PER_MIN (4630) par minute, jusqu'à
- * PACE_BURST_TOKENS (150 000, soit une trentaine de minutes de réserve). Chaque réponse y retire les tokens comptés.
- * Seau vide : l'appel suivant attend (jusqu'à PACE_MAX_WAIT_SEC, 20 s), sinon le chat répond 429 avec la durée de pause.
- * PACE=off désactive. L'état est en mémoire : il repart plein au redémarrage de LibreChat.
+ * Tranches : le quota du jour est coupé en QUOTA_TRANCHES parts égales (3 par défaut). Quand l'utilisateur a utilisé
+ * une part, le chat s'arrête avec un message de pause. Pour démarrer la part suivante, il envoie « reprendre » :
+ * c'est lui qui valide, rien ne repart tout seul. La dernière part se termine par le message habituel de quota épuisé.
+ * Le total utilisé vient de l'orchestrateur (GET /quota) : il survit aux redémarrages. Si l'orchestrateur ne répond pas,
+ * le chat n'est jamais bloqué. QUOTA_TRANCHES=1 supprime les pauses. Ces parts s'appliquent par jour (UTC).
  */
-const paceNum = (name, def, min) => {
-  const n = Number(process.env[name] ?? def);
-  return Number.isFinite(n) && n >= min ? n : def;
-};
-const paceState = new Map();
+const trancheState = new Map();
+const RESUME_RE = /^\/?(reprendre|reprise|continuer)$/i;
 
-function paceLevel(user, now) {
-  const burst = paceNum('PACE_BURST_TOKENS', 150000, 1);
-  const s = paceState.get(user) || { level: burst, at: now };
-  return { level: Math.min(burst, s.level + ((now - s.at) / 60000) * paceNum('PACE_TOKENS_PER_MIN', 4630, 1)), at: now };
+async function quotaStatus(user) {
+  if (!orchBase() || !process.env.ORCHESTRATOR_SECRET) {
+    return null;
+  }
+  try {
+    const r = await quotaFetch('/quota', user, { method: 'GET' });
+    if (!r.ok) {
+      return null;
+    }
+    const j = await r.json();
+    const used = Number(j.used);
+    const limit = Number(j.limit);
+    return Number.isFinite(used) && Number.isFinite(limit) && limit > 0 ? { used, limit } : null;
+  } catch (e) {
+    return null;
+  }
 }
 
-/** Avant un appel au modèle : null si l'appel peut partir (après une courte attente si besoin), sinon un message de pause. */
-async function paceGate(user) {
-  if (!user || process.env.PACE === 'off') {
+function lastUserMessage(messages) {
+  if (!Array.isArray(messages)) {
     return null;
   }
-  const s = paceLevel(user, Date.now());
-  paceState.set(user, s);
-  if (s.level >= 0) {
-    return null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i] && messages[i].role === 'user') {
+      return messages[i];
+    }
   }
-  const waitMs = Math.ceil((-s.level / paceNum('PACE_TOKENS_PER_MIN', 4630, 1)) * 60000);
-  if (waitMs <= paceNum('PACE_MAX_WAIT_SEC', 20, 0) * 1000) {
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
-    return null;
-  }
-  return `Pause technique : le quota du jour est réparti sur la journée pour durer. Reprise automatique dans environ ${Math.ceil(waitMs / 60000)} min.`;
+  return null;
 }
 
-/** Après une réponse : retire du seau les tokens comptés. */
-function paceDebit(user, tokens) {
-  if (!user || !(tokens > 0) || process.env.PACE === 'off') {
-    return;
+const textOf = (m) =>
+  !m
+    ? ''
+    : typeof m.content === 'string'
+      ? m.content
+      : Array.isArray(m.content)
+        ? m.content.map((p) => (p && typeof p.text === 'string' ? p.text : '')).join('')
+        : '';
+
+/** Avant un appel au modèle : null si l'appel peut partir, sinon le message de pause. « reprendre » ouvre la part suivante. */
+async function trancheGate(user, body) {
+  const count = Math.floor(Number(process.env.QUOTA_TRANCHES ?? '3'));
+  if (!user || !(count >= 2) || count > 10) {
+    return null;
   }
-  const s = paceLevel(user, Date.now());
-  paceState.set(user, { level: s.level - tokens, at: s.at });
+  const st = await quotaStatus(user);
+  if (!st || st.used >= st.limit) {
+    return null;
+  }
+  const size = st.limit / count;
+  const day = new Date().toISOString().slice(0, 10);
+  let state = trancheState.get(user);
+  if (!state || state.day !== day) {
+    state = { day, unlocked: 1 };
+  }
+  if (st.used < state.unlocked * size) {
+    trancheState.set(user, state);
+    return null;
+  }
+  const msg = lastUserMessage(body && body.messages);
+  if (msg && RESUME_RE.test(textOf(msg).trim())) {
+    state.unlocked = Math.min(count, Math.max(state.unlocked, Math.floor(st.used / size)) + 1);
+    trancheState.set(user, state);
+    msg.content = 'Continue la tâche en cours là où tu t\'étais arrêté.';
+    return null;
+  }
+  trancheState.set(user, state);
+  const done = Math.min(count, Math.floor(st.used / size));
+  const fmt = (n) => Math.round(n).toLocaleString('fr-FR');
+  return `Tranche ${done} sur ${count} terminée : ${fmt(st.used)} tokens utilisés aujourd'hui sur ${fmt(st.limit)}. Prends une pause. Pour lancer la tranche ${done + 1}, envoie le message « reprendre ».`;
 }
 
 /** Envoie les tokens consommés à l'orchestrateur, sans attendre sa réponse. */
 function reportTokens(user, tokens) {
-  paceDebit(user, tokens);
   if (!user || !(tokens > 0) || !orchBase() || !process.env.ORCHESTRATOR_SECRET) {
     return;
   }
