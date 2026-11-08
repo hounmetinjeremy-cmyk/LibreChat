@@ -7,6 +7,9 @@
  *
  * Règles :
  *  - les N derniers résultats d'outils restent intacts (N = HISTORY_KEEP_TOOL_RESULTS, 6 par défaut) ;
+ *  - la limite avance PAR PALIERS de HISTORY_TRIM_STEP résultats (8 par défaut), pas à chaque appel : le début de
+ *    l'historique reste ainsi identique d'un appel à l'autre, ce qui laisse le cache du fournisseur (DeepSeek, Gemini)
+ *    fonctionner. Il ne s'invalide qu'à chaque palier. Entre deux paliers, 6 à 13 résultats restent intacts ;
  *  - un résultat plus ancien et plus long que HISTORY_STUB_MIN_CHARS (600 par défaut) est réduit à son début et sa fin,
  *    avec une note qui dit comment retrouver le détail ;
  *  - messages de l'utilisateur, textes de l'assistant et appels d'outils (donc le code écrit par l'IA) ne sont JAMAIS
@@ -68,7 +71,10 @@ function trimHistory(messages) {
         toolIdx.push(i);
       }
     });
-    const old = new Set(toolIdx.slice(0, Math.max(0, toolIdx.length - keep)));
+    const step = Math.max(1, Math.floor(num(process.env.HISTORY_TRIM_STEP, 8)));
+    const extra = toolIdx.length - keep;
+    const stubCount = extra > 0 ? Math.floor(extra / step) * step : 0;
+    const old = new Set(toolIdx.slice(0, stubCount));
     if (!old.size) {
       return messages;
     }

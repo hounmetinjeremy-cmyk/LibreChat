@@ -52,12 +52,25 @@ function reportTokens(user, tokens) {
 }
 
 /**
- * Tokens à compter : exactement ceux que le fournisseur annonce (entrée + sortie, comme le tableau de bord
- * OpenRouter). Sans chiffre du fournisseur, une estimation.
+ * Tokens à compter : ceux que le fournisseur annonce (entrée + sortie), avec un poids réduit pour la partie d'entrée
+ * déjà en cache (DeepSeek : prompt_cache_hit_tokens ; OpenRouter, Gemini : prompt_tokens_details.cached_tokens).
+ * Dans une tâche à plusieurs étapes, tout l'historique est renvoyé à chaque appel mais le fournisseur le facture bien
+ * moins cher : le compter plein tarif viderait le quota sans coût réel. QUOTA_CACHE_WEIGHT = poids d'un token en cache
+ * (0.1 par défaut ; 1 = plein tarif, comme avant). Sans chiffre du fournisseur, une estimation.
+ * Une ligne « [quota] ... » est écrite dans les journaux à chaque réponse pour voir où partent les tokens.
  */
 function countedTokens(usage, inChars, outChars) {
   if (usage && Number(usage.total_tokens) > 0) {
-    return Number(usage.total_tokens);
+    const total = Number(usage.total_tokens);
+    const details = usage.prompt_tokens_details || {};
+    const cached = Math.min(total, Number(usage.prompt_cache_hit_tokens) || Number(details.cached_tokens) || 0);
+    const raw = Number(process.env.QUOTA_CACHE_WEIGHT ?? '0.1');
+    const weight = Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : 0.1;
+    const counted = total - cached * (1 - weight);
+    console.info(
+      `[quota] entrée ${Number(usage.prompt_tokens) || '?'} (dont ${cached} en cache), sortie ${Number(usage.completion_tokens) || '?'}, comptés ${Math.round(counted)}`,
+    );
+    return counted;
   }
   return Math.ceil(inChars / 3.5 + outChars / 3.5);
 }
