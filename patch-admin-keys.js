@@ -4,8 +4,9 @@
  * OpenRouter (Relace) : patch-openrouter.js, appliqué ci-dessous.
  * Quota de tokens du jour par utilisateur : patch-token-quota.js (jamais bloquant).
  * Allègement de l'historique envoyé au modèle (anciennes sorties d'outils) : patch-history.js.
- * Consignes du terminal : patch-sandbox-bun.js (bun install) et patch-sandbox-flow.js (laisser Cloudflare Pages
- * construire, clone léger), jamais bloquants.
+ * Consignes du terminal : patch-sandbox-bun.js (bun install), patch-sandbox-flow.js (laisser Cloudflare Pages
+ * construire, clone léger) et patch-sandbox-method.js (GitHub pour écrire, Cloudflare/Vercel pour déployer,
+ * terminal pour tester), jamais bloquants.
  * Résumé automatique de la conversation limité à 10 lignes : patch-short-summary.js (jamais bloquant).
  * Fenêtre de contexte par défaut de 24 000 tokens pour Aube et Soleil : patch-context-budget.js (jamais bloquant).
  * Descriptions des outils MCP raccourcies avant envoi au modèle : patch-slim-tools.js (jamais bloquant).
@@ -26,6 +27,7 @@ require('./patch-token-quota.js');
 require('./patch-history.js');
 require('./patch-sandbox-bun.js');
 require('./patch-sandbox-flow.js');
+require('./patch-sandbox-method.js');
 require('./patch-short-summary.js');
 require('./patch-context-budget.js');
 require('./patch-slim-tools.js');
