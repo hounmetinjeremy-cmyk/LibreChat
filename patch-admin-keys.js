@@ -6,6 +6,7 @@
  * Allègement de l'historique envoyé au modèle (anciennes sorties d'outils) : patch-history.js.
  * Consignes du terminal : patch-sandbox-bun.js (bun install) et patch-sandbox-flow.js (laisser Cloudflare Pages
  * construire, clone léger), jamais bloquants.
+ * Résumé automatique de la conversation limité à 10 lignes : patch-short-summary.js (jamais bloquant).
  */
 require('./patch-google-link.js');
 require('./patch-identity.js');
@@ -23,6 +24,7 @@ require('./patch-token-quota.js');
 require('./patch-history.js');
 require('./patch-sandbox-bun.js');
 require('./patch-sandbox-flow.js');
+require('./patch-short-summary.js');
 
 const fs = require('fs');
 
