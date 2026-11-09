@@ -8,6 +8,7 @@
  * construire, clone léger), jamais bloquants.
  * Résumé automatique de la conversation limité à 10 lignes : patch-short-summary.js (jamais bloquant).
  * Fenêtre de contexte par défaut de 24 000 tokens pour Aube et Soleil : patch-context-budget.js (jamais bloquant).
+ * Descriptions des outils MCP raccourcies avant envoi au modèle : patch-slim-tools.js (jamais bloquant).
  */
 require('./patch-google-link.js');
 require('./patch-identity.js');
@@ -27,6 +28,7 @@ require('./patch-sandbox-bun.js');
 require('./patch-sandbox-flow.js');
 require('./patch-short-summary.js');
 require('./patch-context-budget.js');
+require('./patch-slim-tools.js');
 
 const fs = require('fs');
 
