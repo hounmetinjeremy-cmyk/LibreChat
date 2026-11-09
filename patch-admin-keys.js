@@ -7,6 +7,7 @@
  * Consignes du terminal : patch-sandbox-bun.js (bun install) et patch-sandbox-flow.js (laisser Cloudflare Pages
  * construire, clone léger), jamais bloquants.
  * Résumé automatique de la conversation limité à 10 lignes : patch-short-summary.js (jamais bloquant).
+ * Fenêtre de contexte par défaut de 24 000 tokens pour Aube et Soleil : patch-context-budget.js (jamais bloquant).
  */
 require('./patch-google-link.js');
 require('./patch-identity.js');
@@ -25,6 +26,7 @@ require('./patch-history.js');
 require('./patch-sandbox-bun.js');
 require('./patch-sandbox-flow.js');
 require('./patch-short-summary.js');
+require('./patch-context-budget.js');
 
 const fs = require('fs');
 
