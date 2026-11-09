@@ -1,7 +1,7 @@
 /**
- * Consigne ajoutée au terminal : gagner du temps en laissant Cloudflare Pages (ou Vercel) construire le site
- * à la place du conteneur de 1 Go. Le terminal sert aux tests et à comprendre les erreurs ; après un push,
- * l'IA vérifie le déploiement avec l'API du service (clé déjà dans l'environnement du terminal).
+ * Consigne ajoutée au terminal : laisser Cloudflare Pages (ou Vercel) construire le site à la place du
+ * conteneur de 1 Go ; le terminal sert aux tests et aux erreurs. Texte volontairement TRÈS court : il est
+ * renvoyé au modèle à chaque appel et compte dans la fenêtre de contexte (Max Context Tokens).
  * Jamais bloquant : si l'ancre est introuvable, librechat.yaml reste tel quel (avertissement). Idempotent.
  */
 const fs = require('fs');
@@ -10,7 +10,7 @@ const file = 'librechat.yaml';
 const marker = 'clone --depth 1';
 const anchor = 'Entre les commandes, écris au plus une phrase.';
 const addition =
-  "Gain de temps : clone avec git clone --depth 1. Ne lance pas le build complet d'un site ici quand son dépôt est relié à Cloudflare Pages ou à Vercel (sinon relie-le d'abord avec link_pages) : fais git push, le service construit à ta place. Vérifie ensuite le déploiement avec curl (Cloudflare : GET https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/NOM/deployments, en-tête Authorization: Bearer $CLOUDFLARE_API_TOKEN ; si latest_stage est en échec, lis .../deployments/ID/history/logs ; Vercel : vercel ls et vercel inspect --logs). Le terminal sert aux tests et à comprendre les erreurs. ";
+  "Clone avec git clone --depth 1. Site relié à Cloudflare Pages ou Vercel (sinon link_pages) : git push sans build local, puis vérifie le déploiement par l'API (Cloudflare : /accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/NOM/deployments, Bearer $CLOUDFLARE_API_TOKEN ; journaux : .../deployments/ID/history/logs). Terminal = tests et erreurs. ";
 
 let src;
 try {
