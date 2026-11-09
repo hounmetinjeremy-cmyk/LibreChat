@@ -4,6 +4,7 @@
  * OpenRouter (Relace) : patch-openrouter.js, appliqué ci-dessous.
  * Quota de tokens du jour par utilisateur : patch-token-quota.js (jamais bloquant).
  * Allègement de l'historique envoyé au modèle (anciennes sorties d'outils) : patch-history.js.
+ * Consigne « bun install » pour le terminal : patch-sandbox-bun.js (jamais bloquant).
  */
 require('./patch-google-link.js');
 require('./patch-identity.js');
@@ -19,6 +20,7 @@ require('./patch-openrouter.js');
 require('./patch-cloudflare-link.js');
 require('./patch-token-quota.js');
 require('./patch-history.js');
+require('./patch-sandbox-bun.js');
 
 const fs = require('fs');
 
