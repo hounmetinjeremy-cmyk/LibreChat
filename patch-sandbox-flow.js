@@ -1,7 +1,8 @@
 /**
- * Consigne ajoutée au terminal : laisser Cloudflare Pages (ou Vercel) construire le site à la place du
- * conteneur de 1 Go ; le terminal sert aux tests et aux erreurs. Texte volontairement TRÈS court : il est
- * renvoyé au modèle à chaque appel et compte dans la fenêtre de contexte (Max Context Tokens).
+ * Consigne ajoutée au terminal : ne pas construire le site complet dans le conteneur de 1 Go ; Cloudflare Pages
+ * (ou Vercel) le construit après le dépôt. Texte volontairement TRÈS court : il est renvoyé au modèle à chaque
+ * appel et compte dans la fenêtre de contexte. La méthode générale (GitHub pour écrire, Cloudflare/Vercel pour
+ * déployer, terminal pour tester) est dans patch-sandbox-method.js.
  * Jamais bloquant : si l'ancre est introuvable, librechat.yaml reste tel quel (avertissement). Idempotent.
  */
 const fs = require('fs');
@@ -10,7 +11,7 @@ const file = 'librechat.yaml';
 const marker = 'clone --depth 1';
 const anchor = 'Entre les commandes, écris au plus une phrase.';
 const addition =
-  "Clone avec git clone --depth 1. Site relié à Cloudflare Pages ou Vercel (sinon link_pages) : git push sans build local, puis vérifie le déploiement par l'API (Cloudflare : /accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/NOM/deployments, Bearer $CLOUDFLARE_API_TOKEN ; journaux : .../deployments/ID/history/logs). Terminal = tests et erreurs. ";
+  "Clone avec git clone --depth 1. Ne construis pas le site complet ici : Cloudflare Pages ou Vercel le construit après le dépôt (sinon link_pages). Vérifie le déploiement par l'API (Cloudflare : /accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/NOM/deployments, Bearer $CLOUDFLARE_API_TOKEN ; journaux : .../deployments/ID/history/logs). ";
 
 let src;
 try {
