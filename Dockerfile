@@ -56,24 +56,14 @@ RUN \
 
 COPY --chown=node:node . .
 
-# Limite l'historique envoyé au modèle aux N derniers messages (défaut 6, voir patch-history-limit.js)
-RUN node patch-history-limit.js
 
-# Ajoute l'instruction de développement à tous les agents (voir dev-agent-prompt.txt)
-RUN node patch-agent-prompt.js
 
-# Ajoute le bouton « Résumé » sous les réponses avec outils (voir patch-resume-sheet.js)
-RUN node patch-resume-sheet.js
 
-# Met le nom « Jérémy » dans le code et remplace les logos (voir patch-branding.js)
-RUN node patch-branding.js
 
-# Ajoute la page admin « /admin-config » pour enregistrer les clés des fournisseurs (voir patch-admin-keys.js)
-RUN node patch-admin-keys.js
 
-# Interface façon Claude : outils sans contour, logo qui tourne pendant le travail (voir patch-claude-ui.js)
-RUN node patch-claude-ui.js
 
+# Applique TOUS les patchs du depot (idempotents, jamais bloquants) avant la compilation du client.
+RUN for p in patch-*.js; do echo "== $p"; node "$p" || true; done
 RUN \
     # React client build with configurable memory
     NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}" npm run frontend; \
