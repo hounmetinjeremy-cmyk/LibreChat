@@ -42,7 +42,9 @@ endpoints:
     # titleConvo DÉSACTIVÉ : la génération de titre est une requête supplémentaire.
     # Historique résumé et limite de sortie AUTOMATIQUE : voir patch-history-limit.js
     # (réponse limitée à 1200 tokens, sans limite dès que le message demande du code).
-    # Max Context Tokens : à régler dans l'interface (3000 sans outil, 6000 avec MCP légers).
+    # Max Context Tokens : fixé à 100000 dans modelSpecs (preset d'Aube et de Soleil). Les définitions des outils des serveurs
+    # MCP connectés (une cinquantaine d'outils = environ 20 000 tokens) et les consignes (environ 8 600) comptent dans ce budget :
+    # à 24000, l'erreur « Your messages do not fit in the current context window » apparaissait.
     # Température basse : moins de réponses inventées.
     # iconURL : ton logo (écrit dans /assets/jeremy-logo.svg par patch-branding.js).
     - name: "Modèles"
@@ -99,6 +101,7 @@ modelSpecs:
       preset:
         endpoint: "Modèles"
         model: "Aube"
+        maxContextTokens: 100000
     - name: "soleil"
       label: "Soleil"
       iconURL: "/assets/jeremy-logo.svg"
@@ -106,6 +109,7 @@ modelSpecs:
       preset:
         endpoint: "Modèles"
         model: "Soleil"
+        maxContextTokens: 100000
 
 mcpServers:
   cloudflare:
