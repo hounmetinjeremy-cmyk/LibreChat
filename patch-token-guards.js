@@ -5,9 +5,12 @@
  *   long pavé de texte au modèle ;
  * - summarization (clé de premier niveau) : résumé de conversation limité à 600 tokens (maxSummaryTokens),
  *   garde les 2 derniers échanges (retainRecent) et élague les anciennes sorties d'outils trop longues
- *   (contextPruning : les 6 dernières réponses de l'IA restent intactes ; au-delà de 35 % du budget de contexte les
- *   vieilles sorties sont raccourcies, à 60 % elles sont effacées ; seules les sorties de plus de 3000 caractères
- *   sont touchées).
+ *   (contextPruning : les 6 dernières réponses de l'IA restent intactes ; seules les sorties de plus de 3000
+ *   caractères sont touchées).
+ * Cache de prompt : réécrire un ancien message change le début du prompt et fait perdre le cache à partir de ce
+ * message. L'élagage ne démarre donc que sur de très longues conversations : sorties raccourcies à 70 % du budget
+ * de contexte, effacées à 85 % (à 35 % et 60 %, il aurait joué presque à chaque étape, car les consignes et les
+ * descriptions d'outils occupent déjà environ 28 000 tokens du budget).
  * Les capacités deferred_tools, execute_code et subagents sont déjà actives par défaut (defaultAgentCapabilities) :
  * rien à écrire, et écrire une liste de capacités remplacerait celle par défaut.
  * recursionLimit reste à 100 : une tâche terminal (clone, édition, tests, push) demande bien plus que 5 étapes.
@@ -60,8 +63,8 @@ src += [
   '  contextPruning:',
   '    enabled: true',
   '    keepLastAssistants: 6',
-  '    softTrimRatio: 0.35',
-  '    hardClearRatio: 0.6',
+  '    softTrimRatio: 0.7',
+  '    hardClearRatio: 0.85',
   '    minPrunableToolChars: 3000',
   '',
 ].join('\n');
