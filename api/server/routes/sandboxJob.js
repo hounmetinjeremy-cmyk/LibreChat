@@ -19,7 +19,7 @@ const orchestratorBase = () =>
     .replace(/\/+$/, '')
     .replace(/\/mcp$/, '');
 
-const dailyLimit = () => Number(process.env.SANDBOX_DAILY_TOKENS) || 2000000;
+const dailyLimit = () => Number(process.env.SANDBOX_DAILY_TOKENS) || 3000000;
 
 /** Solde du jour : appelle l'outil my_quota de l'orchestrateur pour l'utilisateur connecté. */
 router.get('/quota', requireJwtAuth, async (req, res) => {
@@ -59,7 +59,7 @@ router.get('/quota', requireJwtAuth, async (req, res) => {
     // Solde unique (chat + serveurs MCP + terminal), en dollars ; l'interface le convertit en monnaie locale.
     // Test : plafond énorme (1000 $) -> on affiche « illimité » côté interface (unlimited).
     const remaining = Math.max(0, Number(q.tokens_restants) || 0);
-    const limit = Math.max(dailyLimit(), remaining);
+    const limit = Math.max(Number(q.tokens_max_jour) || dailyLimit(), remaining);
     const percent = hasWallet
       ? capUsd > 0
         ? Math.round((remUsd / capUsd) * 100)

@@ -10,6 +10,9 @@ const orchBase = () =>
 /** Identifiant de l'utilisateur, envoyé par LibreChat dans l'en-tête X-User-Id (voir librechat.yaml). */
 const quotaUserOf = (req) => {
   const u = String((req.headers && req.headers['x-user-id']) || '');
+  // Le compte ADMIN ne consomme pas de quota : ni compte, ni bloque, ni mis en pause.
+  const role = String((req.headers && req.headers['x-user-role']) || '').toUpperCase();
+  if (role === 'ADMIN') return '';
   return QUOTA_USER_RE.test(u) ? u : '';
 };
 

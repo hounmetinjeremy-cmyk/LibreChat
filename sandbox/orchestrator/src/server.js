@@ -36,6 +36,7 @@ const C = {
   globalConcurrent: Number(e.MAX_CONCURRENT_GLOBAL || 4),
   sessionsPerDay: Number(e.DAILY_JOBS_PER_USER || 5),
   cmdDefaultSec: 120,
+  tokensPerDay: Number(e.TOKENS_PER_USER_DAY || 3000000), // quota de tokens du chat par utilisateur et par jour
   // Doit rester inférieur au « timeout » du serveur sandbox dans librechat.yaml (200 s).
   cmdMaxSec: Math.max(5, Math.min(Number(e.CMD_MAX_SEC || 170), 190)),
 };
@@ -112,6 +113,15 @@ const safeEq = (a, b) => {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
 const ACTIVE = "('queued','running')";
+
+// Tokens du jour par utilisateur (comptés par LibreChat, envoyés par POST /usage).
+const dayTokens = (userId) => db.prepare("SELECT tokens FROM usage WHERE user_id=? AND day=?").get(userId, today())?.tokens || 0;
+const addTokens = (userId, n) =>
+  db.prepare("INSERT INTO usage (user_id,day,tokens) VALUES (?,?,?) ON CONFLICT(user_id,day) DO UPDATE SET tokens=tokens+?").run(userId, today(), n, n);
+const quotaInfo = (userId) => {
+  const used = dayTokens(userId);
+  return { used, limit: C.tokensPerDay, remaining: Math.max(C.tokensPerDay - used, 0) };
+};
 
 // Une « tâche » (job) = une session de terminal. Journal d'activité lu par le panneau de suivi du chat.
 function addActivity(id, line) {
@@ -487,12 +497,55 @@ async function commandEnv(s, args, ghHeader, svcHeaders) {
   return env;
 }
 
+// Résumé des sorties de commandes, sans IA et sans coût : retire les codes de couleur, les barres de progression
+// et les lignes répétées. Jusqu'à 6000 caractères, la sortie est renvoyée entière ; au-delà, on garde le début,
+// les lignes d'erreur et la fin, avec le nombre de lignes omises.
+const compact = (text) => {
+  const clean = String(text)
+    .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "")
+    .replace(/\r/g, "\n");
+  const lines = [];
+  let last = "";
+  let repeat = 0;
+  const flush = () => {
+    if (repeat > 0) lines.push("(ligne répétée " + repeat + " fois)");
+    repeat = 0;
+  };
+  for (const raw of clean.split("\n")) {
+    const l = raw.replace(/\s+$/, "");
+    if (!l.trim()) continue;
+    if (/^[\s\[\(#=>.\-|\\\/]{5,}\]?\s*\d*%?\s*$/.test(l) || /\d+%\s*[|\[#=]/.test(l)) continue;
+    if (l === last) {
+      repeat += 1;
+      continue;
+    }
+    flush();
+    lines.push(l);
+    last = l;
+  }
+  flush();
+  const full = lines.join("\n");
+  if (full.length <= 6000) return full;
+  const bad = /error|erreur|ERR!|failed|fatal|exception|traceback|cannot|not found|denied|ENOENT|EACCES|warn/i;
+  const head = lines.slice(0, 8);
+  const tail = lines.slice(-20);
+  const middle = lines.slice(8, -20);
+  const important = middle.filter((l) => bad.test(l)).slice(0, 12);
+  const omitted = middle.length - important.length;
+  const out =
+    head.join("\n") +
+    "\n...[" + omitted + " lignes omises : utilise grep, head ou tail pour en voir plus]...\n" +
+    (important.length ? important.join("\n") + "\n...\n" : "") +
+    tail.join("\n");
+  return out.length > 4500 ? out.slice(0, 1500) + "\n...[tronqué]...\n" + out.slice(-3000) : out;
+};
+
 const ok = (t) => ({ content: [{ type: "text", text: t }] });
 const ko = (t) => ({ content: [{ type: "text", text: t }], isError: true });
-const clip = (t, n = 12000) => (t.length > n ? `${t.slice(0, 3000)}\n...[tronqué]...\n${t.slice(-(n - 3000))}` : t);
+const clip = (t, n = 6000) => (t.length > n ? `${t.slice(0, 3000)}\n...[tronqué]...\n${t.slice(-(n - 3000))}` : t);
 
 // ------------------------------------------------------------------------------------ serveur MCP (LibreChat)
-function buildServer(userId, ghHeader, svcHeaders, reqSignal) {
+function buildServer(userId, ghHeader, svcHeaders, reqSignal, userRole) {
   const s = new McpServer(
     { name: "fly-sandboxes", version: "3.0.0" },
     {
@@ -547,6 +600,9 @@ function buildServer(userId, ghHeader, svcHeaders, reqSignal) {
       // Un seul signal d'annulation : arrêt MCP du chat OU connexion HTTP coupée.
       const signal = AbortSignal.any([reqSignal, ...(extra && extra.signal ? [extra.signal] : [])]);
       if (signal.aborted) return ko("Annulé.");
+      if (userRole !== "ADMIN" && quotaInfo(userId).remaining <= 0) {
+        return ko("Le quota de tokens du jour de cet utilisateur est épuisé. Il se renouvelle demain. Dis-le en une phrase et arrête-toi : ne lance plus de commande.");
+      }
       const command = String(args.command || "").trim();
       if (!command) return ko("command est vide.");
       const cwd = String(args.cwd || "");
@@ -575,7 +631,7 @@ function buildServer(userId, ghHeader, svcHeaders, reqSignal) {
 
       if (r.cancelled) return ko("Commande interrompue : arrêt demandé, le processus a été tué. Ne la relance pas sauf si l'utilisateur le demande.");
       if (r.closed) return ko("La session de terminal s'est fermée pendant la commande. La prochaine commande en ouvrira une nouvelle (les fichiers sont perdus).");
-      const out = clip(scrubWith(sx.secrets, r.out || "")).trim();
+      const out = clip(compact(scrubWith(sx.secrets, r.out || ""))).trim();
       addActivity(sx.id, `→ code ${r.timedOut ? "délai dépassé" : r.code}`);
 
       let head = r.timedOut ? `Délai dépassé (${timeout} s), processus tué.` : `code ${r.code === null || r.code === undefined ? `signal ${r.signal}` : r.code}`;
@@ -608,6 +664,10 @@ function buildServer(userId, ghHeader, svcHeaders, reqSignal) {
     return ok(
       JSON.stringify({
         sessions_restantes: Math.max(C.sessionsPerDay - u.jobs, 0),
+        tokens_restants: userRole === "ADMIN" ? C.tokensPerDay : quotaInfo(userId).remaining,
+        admin: userRole === "ADMIN",
+        tokens_max_jour: C.tokensPerDay,
+        tokens_utilises: quotaInfo(userId).used,
         session_ouverte: Boolean(sess),
         fermeture_automatique_apres_s: C.idleSec,
         duree_max_commande_s: C.cmdMaxSec,
@@ -681,6 +741,7 @@ function mcpAuth(req, res, next) {
   const user = String(req.headers["x-user-id"] || "");
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(user)) return res.status(400).json({ error: "X-User-Id invalide" });
   req.userId = user;
+  req.userRole = String(req.headers['x-user-role'] || '').toUpperCase();
   next();
 }
 
@@ -705,6 +766,16 @@ app.get("/jobs/:id", mcpAuth, (req, res) => {
     created_at: j.created_at,
     finished_at: j.finished_at,
   });
+});
+
+// Quota de tokens : lu et alimenté par LibreChat (même identité que le serveur MCP).
+app.get("/quota", mcpAuth, (req, res) => {
+  res.set("Cache-Control", "no-store").json(quotaInfo(req.userId));
+});
+app.post("/usage", mcpAuth, express.json({ limit: "4kb" }), (req, res) => {
+  const n = Math.floor(Number(req.body && req.body.tokens));
+  if (Number.isFinite(n) && n > 0 && n < 5000000) addTokens(req.userId, n);
+  res.json(quotaInfo(req.userId));
 });
 
 // Arrêt explicite (en plus de l'annulation MCP) : tue la commande en cours de cet utilisateur.
@@ -734,7 +805,7 @@ app.post("/mcp", mcpAuth, express.json({ limit: "1mb" }), async (req, res) => {
   const keys = msgs.filter((m) => m && m.method === "tools/call" && m.id !== undefined).map((m) => `${req.userId}:${m.id}`);
   for (const k of keys) INFLIGHT.set(k, ctl);
 
-  const server = buildServer(req.userId, String(req.headers["x-github-token"] || ""), svcFrom(req.headers), ctl.signal);
+  const server = buildServer(req.userId, String(req.headers["x-github-token"] || ""), svcFrom(req.headers), ctl.signal, req.userRole);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", () => {
     for (const k of keys) if (INFLIGHT.get(k) === ctl) INFLIGHT.delete(k);

@@ -66,6 +66,21 @@ const compact = (text) => {
 
 const edits = [
   [
+    "role de l'utilisateur",
+    "  req.userId = user;\n",
+    "  req.userId = user;\n  req.userRole = String(req.headers['x-user-role'] || '').toUpperCase();\n",
+  ],
+  [
+    "signature buildServer",
+    "function buildServer(userId, ghHeader, svcHeaders, reqSignal) {",
+    "function buildServer(userId, ghHeader, svcHeaders, reqSignal, userRole) {",
+  ],
+  [
+    "appel buildServer",
+    'buildServer(req.userId, String(req.headers["x-github-token"] || ""), svcFrom(req.headers), ctl.signal);',
+    'buildServer(req.userId, String(req.headers["x-github-token"] || ""), svcFrom(req.headers), ctl.signal, req.userRole);',
+  ],
+  [
     "configuration",
     "  cmdDefaultSec: 120,\n",
     "  cmdDefaultSec: 120,\n  tokensPerDay: Number(e.TOKENS_PER_USER_DAY || 3000000), // quota de tokens du chat par utilisateur et par jour\n",
@@ -93,7 +108,7 @@ const edits = [
   [
     "refus du terminal",
     "      const command = String(args.command || \"\").trim();\n",
-    "      if (quotaInfo(userId).remaining <= 0) {\n" +
+    "      if (userRole !== \"ADMIN\" && quotaInfo(userId).remaining <= 0) {\n" +
       "        return ko(\"Le quota de tokens du jour de cet utilisateur est épuisé. Il se renouvelle demain. Dis-le en une phrase et arrête-toi : ne lance plus de commande.\");\n" +
       "      }\n" +
       "      const command = String(args.command || \"\").trim();\n",
@@ -102,7 +117,8 @@ const edits = [
     "my_quota",
     "        sessions_restantes: Math.max(C.sessionsPerDay - u.jobs, 0),\n",
     "        sessions_restantes: Math.max(C.sessionsPerDay - u.jobs, 0),\n" +
-      "        tokens_restants: quotaInfo(userId).remaining,\n" +
+      "        tokens_restants: userRole === \"ADMIN\" ? C.tokensPerDay : quotaInfo(userId).remaining,\n" +
+      "        admin: userRole === \"ADMIN\",\n" +
       "        tokens_max_jour: C.tokensPerDay,\n" +
       "        tokens_utilises: quotaInfo(userId).used,\n",
   ],

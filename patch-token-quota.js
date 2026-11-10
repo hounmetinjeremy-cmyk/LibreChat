@@ -113,6 +113,7 @@ patchFile('librechat.yaml', '# quota-tokens', [
       "      # quota-tokens : l'identifiant de l'utilisateur sert à compter ses tokens du jour (patch-token-quota.js)",
       '      headers:',
       '        X-User-Id: "{{LIBRECHAT_USER_ID}}"',
+      '        X-User-Role: "{{LIBRECHAT_USER_ROLE}}"',
       '',
     ].join('\n'),
   ],

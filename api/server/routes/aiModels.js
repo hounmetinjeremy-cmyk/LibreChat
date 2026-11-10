@@ -78,6 +78,240 @@ const DOC_PROMPT =
 
 const run = (fn) => (typeof runAsSystem === 'function' ? runAsSystem(fn) : fn());
 
+/* ---------- quota de tokens du jour (compté ici, rangé par l'orchestrateur) ---------- */
+
+const QUOTA_USER_RE = /^[A-Za-z0-9_-]{8,64}$/;
+
+const orchBase = () =>
+  String(process.env.SANDBOX_ORCH_URL || process.env.SANDBOX_MCP_URL || '')
+    .replace(/\/+$/, '')
+    .replace(/\/mcp$/, '');
+
+/** Identifiant de l'utilisateur, envoyé par LibreChat dans l'en-tête X-User-Id (voir librechat.yaml). */
+const quotaUserOf = (req) => {
+  const u = String((req.headers && req.headers['x-user-id']) || '');
+  // Le compte ADMIN ne consomme pas de quota : ni compte, ni bloque, ni mis en pause.
+  const role = String((req.headers && req.headers['x-user-role']) || '').toUpperCase();
+  if (role === 'ADMIN') return '';
+  return QUOTA_USER_RE.test(u) ? u : '';
+};
+
+const quotaFetch = (route, user, init) =>
+  fetch(`${orchBase()}${route}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${process.env.ORCHESTRATOR_SECRET || ''}`,
+      'X-User-Id': user,
+      'Content-Type': 'application/json',
+    },
+    signal: AbortSignal.timeout(4000),
+  });
+
+/** Tokens restants aujourd'hui, ou null si l'orchestrateur ne répond pas (le chat n'est alors jamais bloqué). */
+async function quotaLeft(user) {
+  if (!orchBase() || !process.env.ORCHESTRATOR_SECRET) {
+    return null;
+  }
+  try {
+    const r = await quotaFetch('/quota', user, { method: 'GET' });
+    if (!r.ok) {
+      return null;
+    }
+    const j = await r.json();
+    return Number.isFinite(Number(j.remaining)) ? Number(j.remaining) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Tranches : le quota du jour est coupé en QUOTA_TRANCHES parts égales (3 par défaut). Quand l'utilisateur a utilisé
+ * une part, le chat s'arrête avec un message de pause. Pour démarrer la part suivante, il envoie « reprendre » :
+ * c'est lui qui valide, rien ne repart tout seul. La dernière part se termine par le message habituel de quota épuisé.
+ * Le total utilisé vient de l'orchestrateur (GET /quota) : il survit aux redémarrages. Si l'orchestrateur ne répond pas,
+ * le chat n'est jamais bloqué. QUOTA_TRANCHES=1 supprime les pauses. Ces parts s'appliquent par jour (UTC).
+ */
+const trancheState = new Map();
+const RESUME_RE = /^\/?(reprendre|reprise|continuer)$/i;
+
+async function quotaStatus(user) {
+  if (!orchBase() || !process.env.ORCHESTRATOR_SECRET) {
+    return null;
+  }
+  try {
+    const r = await quotaFetch('/quota', user, { method: 'GET' });
+    if (!r.ok) {
+      return null;
+    }
+    const j = await r.json();
+    const used = Number(j.used);
+    const limit = Number(j.limit);
+    return Number.isFinite(used) && Number.isFinite(limit) && limit > 0 ? { used, limit } : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function lastUserMessage(messages) {
+  if (!Array.isArray(messages)) {
+    return null;
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i] && messages[i].role === 'user') {
+      return messages[i];
+    }
+  }
+  return null;
+}
+
+const textOf = (m) =>
+  !m
+    ? ''
+    : typeof m.content === 'string'
+      ? m.content
+      : Array.isArray(m.content)
+        ? m.content.map((p) => (p && typeof p.text === 'string' ? p.text : '')).join('')
+        : '';
+
+/** Avant un appel au modèle : null si l'appel peut partir, sinon le message de pause. « reprendre » ouvre la part suivante. */
+async function trancheGate(user, body) {
+  const count = Math.floor(Number(process.env.QUOTA_TRANCHES ?? '3'));
+  if (!user || !(count >= 2) || count > 10) {
+    return null;
+  }
+  const st = await quotaStatus(user);
+  if (!st || st.used >= st.limit) {
+    return null;
+  }
+  const size = st.limit / count;
+  const day = new Date().toISOString().slice(0, 10);
+  let state = trancheState.get(user);
+  if (!state || state.day !== day) {
+    state = { day, unlocked: 1 };
+  }
+  if (st.used < state.unlocked * size) {
+    trancheState.set(user, state);
+    return null;
+  }
+  const msg = lastUserMessage(body && body.messages);
+  if (msg && RESUME_RE.test(textOf(msg).trim())) {
+    state.unlocked = Math.min(count, Math.max(state.unlocked, Math.floor(st.used / size)) + 1);
+    trancheState.set(user, state);
+    msg.content = 'Continue la tâche en cours là où tu t\'étais arrêté.';
+    return null;
+  }
+  trancheState.set(user, state);
+  const done = Math.min(count, Math.floor(st.used / size));
+  const fmt = (n) => Math.round(n).toLocaleString('fr-FR');
+  return `Tranche ${done} sur ${count} terminée : ${fmt(st.used)} tokens utilisés aujourd'hui sur ${fmt(st.limit)}. Prends une pause. Pour lancer la tranche ${done + 1}, envoie le message « reprendre ».`;
+}
+
+/** Envoie les tokens consommés à l'orchestrateur, sans attendre sa réponse. */
+function reportTokens(user, tokens) {
+  if (!user || !(tokens > 0) || !orchBase() || !process.env.ORCHESTRATOR_SECRET) {
+    return;
+  }
+  quotaFetch('/usage', user, { method: 'POST', body: JSON.stringify({ tokens: Math.round(tokens) }) }).catch(
+    () => {},
+  );
+}
+
+/**
+ * Tokens à compter : ceux que le fournisseur annonce (entrée + sortie), avec un poids réduit pour la partie d'entrée
+ * déjà en cache (DeepSeek : prompt_cache_hit_tokens ; OpenRouter, Gemini : prompt_tokens_details.cached_tokens).
+ * Dans une tâche à plusieurs étapes, tout l'historique est renvoyé à chaque appel mais le fournisseur le facture bien
+ * moins cher : le compter plein tarif viderait le quota sans coût réel. QUOTA_CACHE_WEIGHT = poids d'un token en cache
+ * (0.1 par défaut ; 1 = plein tarif, comme avant). Sans chiffre du fournisseur, une estimation.
+ * Une ligne « [quota] ... » est écrite dans les journaux à chaque réponse pour voir où partent les tokens.
+ */
+function countedTokens(usage, inChars, outChars) {
+  if (usage && Number(usage.total_tokens) > 0) {
+    const total = Number(usage.total_tokens);
+    const details = usage.prompt_tokens_details || {};
+    const cached = Math.min(total, Number(usage.prompt_cache_hit_tokens) || Number(details.cached_tokens) || 0);
+    const raw = Number(process.env.QUOTA_CACHE_WEIGHT ?? '0.1');
+    const weight = Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : 0.1;
+    const counted = total - cached * (1 - weight);
+    console.info(
+      `[quota] entrée ${Number(usage.prompt_tokens) || '?'} (dont ${cached} en cache), sortie ${Number(usage.completion_tokens) || '?'}, comptés ${Math.round(counted)}`,
+    );
+    return counted;
+  }
+  return Math.ceil(inChars / 3.5 + outChars / 3.5);
+}
+
+/** Écoute la réponse du fournisseur (flux ou JSON) sans la modifier, puis compte les tokens utilisés. */
+function meterStream(readable, streaming, inChars, user) {
+  let buf = '';
+  let whole = '';
+  let usage = null;
+  let outChars = 0;
+  let done = false;
+  const eat = (obj) => {
+    if (!obj || typeof obj !== 'object') {
+      return;
+    }
+    if (obj.usage) {
+      usage = obj.usage;
+    }
+    const ch = obj.choices && obj.choices[0];
+    if (!ch) {
+      return;
+    }
+    const piece = ch.delta || ch.message || {};
+    outChars += String(piece.content || '').length + String(piece.reasoning_content || '').length;
+    if (piece.tool_calls) {
+      outChars += JSON.stringify(piece.tool_calls).length;
+    }
+  };
+  readable.on('data', (chunk) => {
+    try {
+      const text = chunk.toString('utf8');
+      if (streaming) {
+        buf += text;
+        let nl = buf.indexOf('\n');
+        while (nl >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (line.startsWith('data:') && !line.includes('[DONE]')) {
+            try {
+              eat(JSON.parse(line.slice(5)));
+            } catch (e) {
+              /* ligne incomplète : ignorée */
+            }
+          }
+          nl = buf.indexOf('\n');
+        }
+      } else if (whole.length < 4000000) {
+        whole += text;
+      }
+    } catch (e) {
+      /* comptage ignoré */
+    }
+  });
+  const finish = () => {
+    if (done) {
+      return;
+    }
+    done = true;
+    try {
+      if (!streaming) {
+        try {
+          eat(JSON.parse(whole));
+        } catch (e) {
+          /* réponse coupée : estimation */
+        }
+      }
+      reportTokens(user, countedTokens(usage, inChars, outChars));
+    } catch (e) {
+      /* comptage ignoré */
+    }
+  };
+  readable.on('end', finish);
+  readable.on('close', finish);
+}
+
+
 /* ---------- stockage chiffré (même base et même chiffrement que adminKeys.js) ---------- */
 
 const schema = new mongoose.Schema(
@@ -401,6 +635,13 @@ async function handleChat(req, res) {
         .json(err('Aucune clé API enregistrée : à renseigner dans la page admin « Clés API ».'));
     }
     body.messages = await convertMessages(body.messages, resolveVision(cfg));
+    const quotaUser = quotaUserOf(req);
+    if (quotaUser) {
+      const left = await quotaLeft(quotaUser);
+      if (left !== null && left <= 0) {
+        return res.status(429).json(err('Ton quota de tokens du jour est épuisé. Il se renouvelle demain.'));
+      }
+    }
 
     const ctrl = new AbortController();
     res.on('close', () => {
@@ -415,6 +656,10 @@ async function handleChat(req, res) {
       const c = candidates[i];
       const isLast = i === candidates.length - 1;
       const payload = { ...body, model: c.model };
+      // Compteur de tokens : le fournisseur envoie l'usage à la fin du flux (sauf Cloudflare).
+      if (payload.stream && c.provider !== 'cloudflare') {
+        payload.stream_options = { ...(payload.stream_options || {}), include_usage: true };
+      }
       // Gemini : une limite de sortie trop basse peut couper ou vider la réponse.
       if (c.provider === 'gemini' && typeof payload.max_tokens === 'number') {
         payload.max_tokens = Math.max(payload.max_tokens, 4096);
@@ -473,9 +718,11 @@ async function handleChat(req, res) {
     if (!up.body) {
       return res.end();
     }
-    Readable.fromWeb(up.body)
-      .on('error', () => res.end())
-      .pipe(res);
+    const metered = Readable.fromWeb(up.body);
+    if (quotaUser) {
+      meterStream(metered, Boolean(body.stream), JSON.stringify(body.messages || '').length, quotaUser);
+    }
+    metered.on('error', () => res.end()).pipe(res);
   } catch (e) {
     logger.error('[aiModels] échec de la requête', e);
     if (!res.headersSent) {
