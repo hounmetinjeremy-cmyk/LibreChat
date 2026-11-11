@@ -51,6 +51,10 @@ endpoints:
     - name: "Modèles"
       apiKey: "interne"
       baseURL: "http://127.0.0.1:3080/ai-proxy/v1"
+      # quota-tokens : l'identifiant de l'utilisateur sert à compter ses tokens du jour (patch-token-quota.js)
+      headers:
+        X-User-Id: "{{LIBRECHAT_USER_ID}}"
+        X-User-Role: "{{LIBRECHAT_USER_ROLE}}"
       models:
         default: ["Aube", "Soleil"]
         fetch: false
@@ -134,6 +138,7 @@ mcpServers:
     requiresOAuth: true
     headers:
       X-User-Id: "{{LIBRECHAT_USER_ID}}"
+      X-User-Role: "{{LIBRECHAT_USER_ROLE}}"
       X-Link-Key: "${ORCHESTRATOR_SECRET}"
     timeout: 60000
 
@@ -197,6 +202,7 @@ mcpServers:
     headers:
       Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
       X-User-Id: "{{LIBRECHAT_USER_ID}}"
+      X-User-Role: "{{LIBRECHAT_USER_ROLE}}"
     timeout: 200000
     serverInstructions: &sbxInstructions >-
       Terminal Linux jetable pour toute tâche de code, de projet ou de déploiement. Tu le pilotes toi-même avec l'outil execute_command : une commande bash par appel, dossier de départ /work, la sortie t'est renvoyée. Tout se fait par commandes, une étape à la fois, en lisant chaque résultat avant la suivante : git clone, lecture et écriture de fichiers (cat, sed, heredoc), installation, tests, build, déploiement, git commit et push. Chaque appel démarre un bash neuf : utilise le paramètre cwd ou cd dossier && commande. Les fichiers persistent entre les appels. Si l'utilisateur ne donne pas le nom exact du dépôt (propriétaire/nom), appelle d'abord find_repos avec les mots qu'il a écrits, propose-lui les dépôts trouvés en une phrase courte (Tu parles de X ?) et attends son oui avant de cloner. S'il donne le nom exact, clone directement. Ne lis pas tout le projet : cherche avec grep, lis seulement les extraits utiles. Quand l'utilisateur clique sur Stop, la commande en cours est tuée immédiatement : ne la relance pas et n'enchaîne pas d'autres commandes, attends sa prochaine demande. Quand le travail est terminé, résume en quelques phrases ce qui est fait, ce qui reste à faire et le lien utile (pull request, site), puis appelle close_session (facultatif : le terminal se ferme aussi tout seul après 10 minutes sans commande). Ne demande jamais de clé ni de token à l'utilisateur sauf si la tâche en a vraiment besoin. Si un résultat indique que GitHub n'est pas connecté, suis ses indications (lien de connexion tel quel, ou token envoyé dans le chat à passer dans le paramètre github_token). Serveurs MCP disponibles, invisibles dans tes outils tant que l'utilisateur ne les a pas connectés : supabase (base de données, comptes, fichiers), vercel (projets, déploiements, domaines), cloudflare (D1, Workers, Pages, DNS), google-drive (documents de l'application). Dès qu'une tâche en a besoin, dis-le toi-même, sans attendre qu'il te le demande : Pour faire ça, ouvre le menu +, choisis supabase, clique sur Connecter et autorise, puis active-le ; je continue ensuite. Une fois connecté, ses outils apparaissent et tu les utilises directement, sans demander de clé. Pour Cloudflare tu peux aussi déployer avec wrangler (la clé est déjà dans l'environnement du terminal quand le compte est connecté) et relier le dépôt à Cloudflare Pages avec link_pages ; clé Cloudflare envoyée dans le chat (paramètre cloudflare_token) = dernier recours. Pour Vercel, Render et Fly.io, si le connecteur n'existe pas ou refuse la connexion, dis à l'utilisateur de générer sa clé sur le site du service et de te l'envoyer dans le chat, puis passe-la dans le paramètre correspondant d'execute_command (vercel_token, render_key, fly_token). N'affiche jamais une clé dans une commande ni dans ta réponse. Économie de tokens : chaque appel te coûte tout l'historique, donc fais peu d'appels. Regroupe les étapes sûres dans une seule commande avec &&. Pour lire un fichier : grep -n d'abord, puis sed -n 'début,finp' sur les lignes utiles ; ne relis pas un fichier que tu viens d'écrire. Une erreur t'est renvoyée en une ligne (fichier:ligne — erreur exacte) : corrige cette ligne sans relancer la commande pour en voir plus ; si elle ne suffit pas, le journal complet est /tmp/last.log (tail -n 40 ou grep -n). Si une correction échoue deux fois de suite, arrête-toi et demande à l'utilisateur comment continuer, sans tenter une troisième fois. Commande longue (build, installation) : lance-la en arrière-plan avec nohup sh -c 'COMMANDE > /tmp/j.log 2>&1; echo FIN $? >> /tmp/j.log' > /dev/null 2>&1 &, puis attends en UNE seule commande : timeout 150 sh -c 'until grep -q ^FIN /tmp/j.log; do sleep 5; done'; tail -n 15 /tmp/j.log. Si FIN n'apparaît pas, refais la même attente, sans autre vérification entre deux. Entre les commandes, écris au plus une phrase. Le code que tu écris dans un fichier doit toujours être complet, jamais abrégé ni tronqué, et ne le recopie pas dans ta réponse.
@@ -209,5 +215,6 @@ mcpServers:
     headers:
       Authorization: "Bearer ${ORCHESTRATOR_SECRET}"
       X-User-Id: "{{LIBRECHAT_USER_ID}}"
+      X-User-Role: "{{LIBRECHAT_USER_ROLE}}"
     timeout: 200000
     serverInstructions: *sbxInstructions
