@@ -5,6 +5,8 @@
  * Ici : description d'outil limitée à 200 caractères, description de paramètre à 60 (120 pour le schéma
  * racine), exemples retirés. Les noms, types, valeurs possibles (enum) et champs obligatoires ne changent pas.
  * Le terminal (noms contenant « _mcp_sandbox ») n'est JAMAIS modifié : ses descriptions sont réglées à la main.
+ * Google Drive (« _mcp_google-drive ») n'est pas modifié non plus : la description de create_file précise que le
+ * contenu doit être encodé en base64, et celle de search_files explique la syntaxe de recherche.
  * Jamais bloquant : si l'ancre est introuvable, le fichier reste tel quel (avertissement). Idempotent.
  */
 const fs = require('fs');
@@ -13,7 +15,7 @@ const file = 'api/server/routes/aiModels.js';
 const marker = 'patch-slim-tools.js';
 const anchor = '    body.messages = await convertMessages(body.messages, resolveVision(cfg));\n';
 
-const block = String.raw`    // Outils allégés (patch-slim-tools.js) : descriptions raccourcies pour les serveurs MCP autres que le terminal.
+const block = String.raw`    // Outils allégés (patch-slim-tools.js) : descriptions raccourcies pour les serveurs MCP autres que le terminal et Google Drive.
     try {
       if (Array.isArray(body.tools) && body.tools.length > 0) {
         const cut = (s, n) => (typeof s === "string" && s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s);
@@ -30,7 +32,7 @@ const block = String.raw`    // Outils allégés (patch-slim-tools.js) : descrip
         };
         body.tools = body.tools.map((t) => {
           const fn = t && t.function;
-          if (!fn || typeof fn.name !== "string" || fn.name.includes("_mcp_sandbox")) return t;
+          if (!fn || typeof fn.name !== "string" || fn.name.includes("_mcp_sandbox") || fn.name.includes("_mcp_google-drive")) return t;
           return { ...t, function: { ...fn, description: cut(fn.description, 200), parameters: slim(fn.parameters, 0) } };
         });
       }
