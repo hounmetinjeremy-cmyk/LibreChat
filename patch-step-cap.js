@@ -5,8 +5,11 @@
  * de récursion de LibreChat (endpoints.agents) n'a pas arrêté une boucle de plus de 300 étapes.
  * Ici : on compte les résultats d'outils reçus depuis le dernier message de l'utilisateur. Au-delà de MAX_TOOL_STEPS
  * (60 par défaut, variable d'environnement Fly), la requête est refusée avec un message clair. L'utilisateur écrit
- * « continue » pour repartir : un nouveau message remet le compteur à zéro. Valable pour tous les comptes, ADMIN compris.
- * MAX_TOOL_STEPS=0 supprime le plafond.
+ * « continue » pour repartir : un nouveau message remet le compteur à zéro. MAX_TOOL_STEPS=0 supprime le plafond.
+ * Le compte ADMIN n'est PAS limité par défaut (MAX_TOOL_STEPS_ADMIN=0) : il ne doit jamais être arrêté en plein travail.
+ * Pour lui donner quand même un plafond (garde-fou contre une boucle), définir MAX_TOOL_STEPS_ADMIN (ex. 300).
+ * Le refus part en erreur 429 : LibreChat l'affiche comme « The provider declined this request for exceeding a rate or
+ * spending limit », sans notre texte.
  * Jamais bloquant : si l'ancre est introuvable, le fichier reste tel quel (avertissement). Idempotent.
  */
 const fs = require('fs');
@@ -24,7 +27,8 @@ const block = String.raw`    // Plafond d'appels d'outils par message (patch-ste
         if (m && m.role === "user") break;
         if (m && m.role === "tool") capSteps++;
       }
-      const capMax = Math.floor(Number(process.env.MAX_TOOL_STEPS ?? "60"));
+      const capAdmin = String((req.headers && req.headers["x-user-role"]) || "").toUpperCase() === "ADMIN";
+      const capMax = Math.floor(Number(capAdmin ? (process.env.MAX_TOOL_STEPS_ADMIN ?? "0") : (process.env.MAX_TOOL_STEPS ?? "60")));
       if (capMax > 0 && capSteps >= capMax) {
         const capText = "Trop d'étapes pour ce seul message (" + capSteps + " appels d'outils) : je m'arrête pour ne pas gaspiller de tokens. Écris « continue » pour que je poursuive.";
         return res.status(429).json(typeof err === "function" ? err(capText) : { error: { message: capText } });
