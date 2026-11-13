@@ -26,16 +26,6 @@ primary_region = 'ams'
   # Sandboxes éphémères : LibreChat ne fait que commander l'orchestrateur (serveur MCP), voir sandbox/README.md.
   # Secret Fly à définir : ORCHESTRATOR_SECRET (jamais dans ce fichier : dépôt public).
   SANDBOX_MCP_URL = 'https://jeremy-sbx-orch.fly.dev/mcp'
-  # Économie de tokens : tous les outils MCP sont différés (le modèle les trouve à la demande), sauf le terminal
-  # qui reste visible. Pour revenir en arrière : mettre MINISTRE_DEFER_ALL = 'off' (ou supprimer la ligne).
-  MINISTRE_DEFER_ALL = 'on'
-  MINISTRE_DIRECT_SERVERS = 'sandbox,sandbox-soleil'
-  # Filtre des résultats MCP : enveloppe JSON réduite (1500), contenu lu (fichier, diff, sortie) gardé jusqu'à 12000 caractères.
-  MCP_RESULT_JSON_MAX_CHARS = '1500'
-  MCP_RESULT_CONTENT_MAX_CHARS = '12000'
-  MCP_RESULT_DROP_KEYS = 'icon,icons,iconUrl,avatar,avatarUrl,thumbnail,thumbnailUrl,logo,logoUrl,favicon,nodeId,gravatarId'
-  # Limite de sortie des réponses de discussion (1200 par défaut) : 6000 pour ne pas couper un fichier en cours d'écriture.
-  CHAT_MAX_OUTPUT = '6000'
 
 [http_service]
   internal_port = 3080
