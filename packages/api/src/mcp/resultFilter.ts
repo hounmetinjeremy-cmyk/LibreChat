@@ -3,16 +3,26 @@
  * et personnalisés), avant qu'ils n'arrivent à l'IA. Objectif : réduire les tokens
  * sans perdre l'information utile.
  *
+ * Principe « entre les deux » : l'ENVELOPPE d'un résultat (métadonnées, listes, champs techniques)
+ * est réduite fortement ; le CONTENU lu (code d'un fichier, diff, sortie de commande) est protégé
+ * et gardé complet jusqu'à une limite généreuse. Ce filtre ne touche jamais ce que l'IA ÉCRIT :
+ * seulement ce qui lui revient.
+ *
  * Réglages (variables d'environnement, toutes optionnelles) :
  * - MCP_RESULT_FILTER=false          désactive complètement le filtre
  * - MCP_RESULT_MAX_CHARS=12000       taille maximale d'un résultat texte
- * - MCP_RESULT_JSON_MAX_CHARS=1500   budget d'un résultat JSON (défaut : MCP_RESULT_MAX_CHARS).
+ * - MCP_RESULT_JSON_MAX_CHARS=1500   budget de l'ENVELOPPE d'un résultat JSON (défaut : MCP_RESULT_MAX_CHARS).
  *                                    Au-delà, le JSON est réduit étape par étape (moins d'éléments,
  *                                    textes plus courts) jusqu'à entrer dans ce budget, au lieu
  *                                    d'être coupé en plein milieu. Repère : environ 3 caractères
  *                                    par token en JSON, donc 600 = environ 200 tokens, 1500 = 500.
+ * - MCP_RESULT_CONTENT_MAX_CHARS=12000  taille maximale d'un champ de CONTENU protégé (défaut :
+ *                                    MCP_RESULT_MAX_STRING). Ces champs ne comptent pas dans le budget
+ *                                    de l'enveloppe et ne sont pas réduits par les étapes de réduction.
+ * - MCP_RESULT_CONTENT_KEYS=a,b      noms de champs de contenu en plus de ceux par défaut
+ *                                    (content, text, body, code, diff, patch, source, stdout, stderr, output, log, logs)
  * - MCP_RESULT_MAX_ARRAY_ITEMS=25    nombre maximal d'éléments gardés par liste
- * - MCP_RESULT_MAX_STRING=2000       taille maximale d'une chaîne dans un JSON
+ * - MCP_RESULT_MAX_STRING=2000       taille maximale d'une chaîne ordinaire dans un JSON
  * - MCP_RESULT_DROP_KEYS=a,b,c       clés supplémentaires à supprimer
  * - MCP_RESULT_KEEP_KEYS=x,y         clés à toujours conserver
  */
@@ -26,6 +36,21 @@ const MAX_DEPTH = 10;
 const DEFAULT_DROP_KEYS = new Set(['node_id', 'gravatar_id', '_links', 'etag', 'avatar_url']);
 /** Clés se terminant par _url supprimées, sauf celles-ci qui servent à l'utilisateur. */
 const DEFAULT_KEEP_KEYS = new Set(['html_url', 'web_url', 'permalink_url', 'browser_url']);
+/** Champs qui portent du CONTENU à lire (fichier, diff, sortie) : protégés de la réduction stricte. */
+const DEFAULT_CONTENT_KEYS = new Set([
+  'content',
+  'text',
+  'body',
+  'code',
+  'diff',
+  'patch',
+  'source',
+  'stdout',
+  'stderr',
+  'output',
+  'log',
+  'logs',
+]);
 
 /**
  * Étapes de réduction appliquées l'une après l'autre quand un JSON dépasse son budget :
@@ -62,10 +87,14 @@ function readList(name: string): Set<string> {
 
 export interface ResultFilterOptions {
   maxChars: number;
-  /** Budget d'un résultat JSON ; à défaut, maxChars. */
+  /** Budget de l'enveloppe d'un résultat JSON ; à défaut, maxChars. */
   jsonMaxChars?: number;
   maxArrayItems: number;
   maxString: number;
+  /** Champs de contenu protégés de la réduction stricte. */
+  contentKeys?: Set<string>;
+  /** Taille maximale d'un champ de contenu protégé ; à défaut, maxString. */
+  contentMax?: number;
   dropKeys: Set<string>;
   keepKeys: Set<string>;
 }
@@ -76,11 +105,14 @@ export function isResultFilterEnabled(): boolean {
 
 export function getResultFilterOptions(): ResultFilterOptions {
   const maxChars = readInt('MCP_RESULT_MAX_CHARS', DEFAULT_MAX_CHARS);
+  const maxString = readInt('MCP_RESULT_MAX_STRING', DEFAULT_MAX_STRING);
   return {
     maxChars,
     jsonMaxChars: readInt('MCP_RESULT_JSON_MAX_CHARS', maxChars),
     maxArrayItems: readInt('MCP_RESULT_MAX_ARRAY_ITEMS', DEFAULT_MAX_ARRAY_ITEMS),
-    maxString: readInt('MCP_RESULT_MAX_STRING', DEFAULT_MAX_STRING),
+    maxString,
+    contentKeys: new Set([...DEFAULT_CONTENT_KEYS, ...readList('MCP_RESULT_CONTENT_KEYS')]),
+    contentMax: readInt('MCP_RESULT_CONTENT_MAX_CHARS', maxString),
     dropKeys: new Set([...DEFAULT_DROP_KEYS, ...readList('MCP_RESULT_DROP_KEYS')]),
     keepKeys: new Set([...DEFAULT_KEEP_KEYS, ...readList('MCP_RESULT_KEEP_KEYS')]),
   };
@@ -141,7 +173,11 @@ function pruneValue(value: unknown, options: ResultFilterOptions, depth: number)
     if (shouldDropKey(key, options)) {
       continue;
     }
-    const pruned = pruneValue(child, options, depth + 1);
+    // Contenu à lire (fichier, diff, sortie) : gardé jusqu'à contentMax, pas réduit comme l'enveloppe.
+    const pruned =
+      typeof child === 'string' && options.contentKeys?.has(key)
+        ? truncateString(child, options.contentMax ?? options.maxString)
+        : pruneValue(child, options, depth + 1);
     if (!isEmpty(pruned)) {
       output[key] = pruned;
     }
@@ -160,15 +196,36 @@ function capLength(text: string, maxChars: number): string {
   );
 }
 
+/** Total des caractères des champs de contenu protégés dans un JSON déjà nettoyé. */
+function countContentChars(value: unknown, options: ResultFilterOptions): number {
+  if (value === null || typeof value !== 'object') {
+    return 0;
+  }
+  if (Array.isArray(value)) {
+    return value.reduce<number>((sum, item) => sum + countContentChars(item, options), 0);
+  }
+  let total = 0;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof child === 'string' && options.contentKeys?.has(key)) {
+      total += child.length;
+    } else {
+      total += countContentChars(child, options);
+    }
+  }
+  return total;
+}
+
 /**
- * Nettoie un JSON puis, s'il dépasse son budget, le réduit étape par étape
- * (SHRINK_STEPS) pour garder l'essentiel et rester du JSON valide. Les marqueurs
- * « autres éléments omis » et « caractères omis » signalent à l'IA ce qui a été retiré.
- * En dernier recours seulement, le texte est coupé.
+ * Nettoie un JSON puis, si son enveloppe dépasse le budget, la réduit étape par étape
+ * (SHRINK_STEPS) pour garder l'essentiel et rester du JSON valide. Le contenu protégé
+ * (fichier, diff, sortie) a sa propre allocation et n'est pas réduit par ces étapes.
+ * Les marqueurs « autres éléments omis » et « caractères omis » signalent à l'IA ce qui
+ * a été retiré. En dernier recours seulement, le texte est coupé.
  */
 function fitJson(parsed: unknown, options: ResultFilterOptions): string {
-  const budget = options.jsonMaxChars ?? options.maxChars;
-  let text = JSON.stringify(pruneValue(parsed, options, 0) ?? null);
+  const first = pruneValue(parsed, options, 0) ?? null;
+  const budget = (options.jsonMaxChars ?? options.maxChars) + countContentChars(first, options);
+  let text = JSON.stringify(first);
   if (text.length <= budget) {
     return text;
   }
