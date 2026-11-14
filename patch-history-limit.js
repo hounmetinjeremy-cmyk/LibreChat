@@ -1,6 +1,6 @@
 // Patch de build : réduit les tokens envoyés et reçus à chaque message.
-// 1) Historique envoyé au modèle = résumé de 3 phrases + ton message actuel (taille fixe).
-//    Variable HISTORY_SUMMARY_LINES (défaut 3 ; 0 = pas de résumé, historique complet).
+// 1) Historique envoyé au modèle = TOUTE la conversation résumée en 4 lignes (5 au plus) + ton message actuel.
+//    Variable HISTORY_SUMMARY_LINES (défaut 4, de 2 à 5 ; 0 = pas de résumé, historique complet).
 // 2) Sortie automatique : réponse limitée à 1200 tokens (variable CHAT_MAX_OUTPUT),
 //    SAUF si ton message demande du code : alors aucune limite.
 // Tout est local : aucune requête supplémentaire, aucun token en plus.
@@ -29,21 +29,34 @@ const injection = `    try {
       console.warn('[patch-history-limit] limite de sortie ignorée', e);
     }
     try {
-      const summaryOn = parseInt(process.env.HISTORY_SUMMARY_LINES ?? '3', 10);
+      const summaryOn = parseInt(process.env.HISTORY_SUMMARY_LINES ?? '4', 10);
       if (summaryOn > 0 && _messages.length > 1) {
+        const maxLines = Math.min(5, Math.max(2, summaryOn));
         const clip = (t, n) => String(t ?? '').replace(/\\s+/g, ' ').trim().slice(0, n);
         const isText = (m) => m && typeof m.text === 'string' && m.text.length > 0;
         const last = _messages[_messages.length - 1];
         const older = _messages.slice(0, -1);
         const users = older.filter((m) => m.isCreatedByUser && isText(m));
         const bots = older.filter((m) => !m.isCreatedByUser && isText(m));
-        const parts = [];
-        if (users.length > 1) parts.push('Début de la discussion : ' + clip(users[0].text, 100) + '.');
-        if (users.length > 0) parts.push('Dernière question : ' + clip(users[users.length - 1].text, 100) + '.');
-        if (bots.length > 0) parts.push('Dernière réponse : ' + clip(bots[bots.length - 1].text, 120) + '.');
-        if (parts.length > 0 && last.isCreatedByUser && typeof last.text === 'string') {
+        // Toute la conversation tient en 4 lignes (5 au plus) : chaque ligne a une priorité, on garde les plus utiles.
+        const cands = [];
+        if (users.length > 1) cands.push({ order: 1, prio: 2, t: 'Objectif : ' + clip(users[0].text, 110) + '.' });
+        if (users.length > 2) cands.push({ order: 2, prio: 4, t: 'Avant : ' + clip(users[users.length - 2].text, 90) + '.' });
+        if (users.length > 0) cands.push({ order: 3, prio: 1, t: 'Dernière demande : ' + clip(users[users.length - 1].text, 110) + '.' });
+        if (bots.length > 0) cands.push({ order: 4, prio: 1, t: 'Dernière réponse : ' + clip(bots[bots.length - 1].text, 140) + '.' });
+        const seen = new Set();
+        const all = users.concat(bots).map((m) => m.text).join(' ');
+        (all.match(/[\\w./-]+\\.(?:js|ts|tsx|jsx|json|py|html|css|md|ya?ml|toml|sql|sh|txt)\\b/g) || []).slice(-30).forEach((f) => seen.add(f));
+        const files = Array.from(seen).slice(-6);
+        if (files.length > 0) cands.push({ order: 5, prio: 3, t: 'Fichiers cités : ' + files.join(', ') + '.' });
+        const lines = cands
+          .sort((a, b) => a.prio - b.prio || a.order - b.order)
+          .slice(0, maxLines)
+          .sort((a, b) => a.order - b.order)
+          .map((c) => c.t);
+        if (lines.length > 0 && last.isCreatedByUser && typeof last.text === 'string') {
           _messages = [
-            { ...last, text: '[Résumé de la conversation, ' + older.length + ' messages avant]\\n' + parts.join(' ') + '\\n\\n[Message actuel]\\n' + last.text },
+            { ...last, text: '[Résumé de la conversation, ' + older.length + ' messages avant]\\n' + lines.join('\\n') + '\\n\\n[Message actuel]\\n' + last.text },
           ];
         }
       }
