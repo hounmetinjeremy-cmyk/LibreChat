@@ -6,14 +6,16 @@
   var PROVIDERS = [
     { id: 'deepseek', label: 'DeepSeek' },
     { id: 'gemini', label: 'Gemini (Google)' },
-    { id: 'cloudflare', label: 'Cloudflare Workers AI' }
+    { id: 'cloudflare', label: 'Cloudflare Workers AI' },
+    { id: 'openrouter', label: 'OpenRouter (Claude)' }
   ];
-  var LABEL = { deepseek: 'DeepSeek', gemini: 'Gemini', cloudflare: 'Cloudflare' };
+  var LABEL = { deepseek: 'DeepSeek', gemini: 'Gemini', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
   /* Listes de secours, utilisées seulement si la liste en direct du fournisseur est indisponible. */
   var MODELS = {
     deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
     gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.5-flash'],
-    cloudflare: ['@cf/openai/gpt-oss-120b', '@cf/openai/gpt-oss-20b', '@cf/zai-org/glm-4.7-flash', '@cf/google/gemma-4-26b-a4b-it', '@cf/moonshotai/kimi-k2.6']
+    cloudflare: ['@cf/openai/gpt-oss-120b', '@cf/openai/gpt-oss-20b', '@cf/zai-org/glm-4.7-flash', '@cf/google/gemma-4-26b-a4b-it', '@cf/moonshotai/kimi-k2.6'],
+    openrouter: ['anthropic/claude-sonnet-5.5']
   };
   var CUSTOM = '__custom__';
   var live = {};
@@ -160,15 +162,19 @@
     var account = keyField('cloudflare-account', 'ID de compte Cloudflare', 'Identifiant du compte Cloudflare (obligatoire pour utiliser la clé Cloudflare).', function () {
       return api('/api/admin-models', 'PUT', { cloudflareAccount: null }).then(renderModels);
     }, true);
+    var openrouter = keyField('openrouter', 'Clé OpenRouter (Claude)', 'Pour utiliser Claude (par exemple anthropic/claude-sonnet-5.5) dans Aube ou Soleil. Utilisée seulement si tu choisis OpenRouter comme fournisseur d’un modèle ci-dessous, jamais en bascule automatique (Claude coûte bien plus cher).', function () {
+      return api('/api/admin-models', 'PUT', { keys: { openrouter: null } }).then(renderModels);
+    });
     fieldsBox.appendChild(el('div', { className: 'card' }, [
       el('h2', { textContent: 'Clés API' }),
       el('div', { className: 'help', textContent: 'Ajoute les clés que tu as. Si l’une est refusée, vide ou en panne, le serveur bascule automatiquement sur une autre. Aube et Soleil marchent avec n’importe laquelle.' }),
       deepseek.wrap,
       gemini.wrap,
       cloudflare.wrap,
-      account.wrap
+      account.wrap,
+      openrouter.wrap
     ]));
-    refs.keys = { deepseek: deepseek, gemini: gemini, cloudflare: cloudflare };
+    refs.keys = { deepseek: deepseek, gemini: gemini, cloudflare: cloudflare, openrouter: openrouter };
     refs.account = account;
   }
 
@@ -240,6 +246,7 @@
     showState(refs.keys.deepseek, keys.deepseek);
     showState(refs.keys.gemini, keys.gemini);
     showState(refs.keys.cloudflare, keys.cloudflare);
+    showState(refs.keys.openrouter, keys.openrouter);
     showState(refs.account, data.cloudflare);
     var v = data.vision || {};
     refs.vision.model.value = v.model || '';
@@ -270,7 +277,7 @@
       var r = refs[role.id];
       body[role.id] = { provider: r.provider.value, model: r.model.value.trim() };
     });
-    ['deepseek', 'gemini', 'cloudflare'].forEach(function (p) {
+    ['deepseek', 'gemini', 'cloudflare', 'openrouter'].forEach(function (p) {
       var k = refs.keys[p].input.value.trim();
       if (k) { body.keys[p] = k; }
     });

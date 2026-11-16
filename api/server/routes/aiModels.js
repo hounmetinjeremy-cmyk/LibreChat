@@ -1,9 +1,11 @@
 /**
  * Modèles « Aube » et « Soleil » réglés depuis la page admin (/admin-config).
- * - Les clés (DeepSeek, Gemini, Cloudflare Workers AI) sont enregistrées chiffrées en base
+ * - Les clés (DeepSeek, Gemini, Cloudflare Workers AI, OpenRouter) sont enregistrées chiffrées en base
  *   (Cloudflare demande aussi l'ID de compte). Chaque rôle a un fournisseur
  *   préféré et un modèle. Si ce fournisseur n'a pas de clé, ou s'il échoue (clé refusée, solde
  *   épuisé, quota, panne), le serveur BASCULE AUTOMATIQUEMENT sur l'autre clé disponible.
+ * - OpenRouter (Claude, etc.) est « sur demande » : il n'est utilisé que si un rôle l'a choisi comme
+ *   fournisseur préféré, jamais comme bascule automatique (ses modèles coûtent bien plus cher).
  * - Route interne /ai-proxy/v1 : LibreChat l'appelle sur le serveur lui-même (127.0.0.1), elle lit
  *   la config, lit les images/PDF avec Gemini si besoin, puis transmet au bon fournisseur.
  * - Les utilisateurs ne voient que « Aube » et « Soleil », jamais le fournisseur ni la clé.
@@ -17,12 +19,15 @@ const requireJwtAuth = require('../middleware/requireJwtAuth');
 
 const ROLES = ['aube', 'soleil'];
 const LABELS = { aube: 'Aube', soleil: 'Soleil' };
-const PROVIDER_LABELS = { deepseek: 'DeepSeek', gemini: 'Gemini', cloudflare: 'Cloudflare' };
+const PROVIDER_LABELS = { deepseek: 'DeepSeek', gemini: 'Gemini', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
 const PROVIDERS = {
   deepseek: 'https://api.deepseek.com/v1/chat/completions',
   gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
   cloudflare: 'https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1/chat/completions',
+  openrouter: 'https://openrouter.ai/api/v1/chat/completions',
 };
+/** Fournisseurs utilisés seulement quand un rôle les a choisis (jamais en bascule automatique). */
+const OPT_IN_PROVIDERS = new Set(['openrouter']);
 const DEFAULTS = {
   aube: { provider: 'deepseek', model: 'deepseek-v4-flash' },
   soleil: { provider: 'deepseek', model: 'deepseek-v4-pro' },
@@ -33,11 +38,13 @@ const AUTO_MODELS = {
     deepseek: 'deepseek-v4-flash',
     gemini: 'gemini-2.5-flash',
     cloudflare: '@cf/zai-org/glm-4.7-flash',
+    openrouter: 'anthropic/claude-sonnet-5.5',
   },
   soleil: {
     deepseek: 'deepseek-v4-pro',
     gemini: 'gemini-2.5-pro',
     cloudflare: '@cf/openai/gpt-oss-120b',
+    openrouter: 'anthropic/claude-sonnet-5.5',
   },
 };
 /** Modèles retirés par leur fournisseur : jamais utilisés, même s'ils sont encore enregistrés en base. */
@@ -387,6 +394,7 @@ function fallbackKeys() {
     deepseek: real(pair[0]),
     gemini: real(process.env.GOOGLE_KEY) || real(pair[1]),
     cloudflare: real(process.env.CLOUDFLARE_API_TOKEN),
+    openrouter: real(process.env.OPENROUTER_API_KEY) || real(process.env.OPENROUTER_KEY),
   };
 }
 
@@ -414,6 +422,10 @@ function modelFits(provider, model) {
   }
   if (provider === 'cloudflare') {
     return /^@cf\//i.test(model);
+  }
+  if (provider === 'openrouter') {
+    // Identifiants OpenRouter : « éditeur/modèle », par exemple anthropic/claude-sonnet-5.5
+    return /^[A-Za-z0-9._-]+\/[A-Za-z0-9._:-]+/.test(model);
   }
   return !/^gemini/i.test(model) && !/^@cf\//i.test(model);
 }
@@ -454,6 +466,10 @@ function candidatesFor(cfg, role) {
   const order = [preferred].concat(Object.keys(PROVIDERS).filter((p) => p !== preferred));
   const out = [];
   for (const provider of order) {
+    // OpenRouter (Claude…) ne sert jamais de bascule automatique : seulement s'il est choisi pour ce rôle.
+    if (OPT_IN_PROVIDERS.has(provider) && provider !== preferred) {
+      continue;
+    }
     const key = poolKey(cfg, provider);
     const url = providerUrl(cfg, provider);
     if (!key || !url) {
@@ -663,6 +679,12 @@ async function handleChat(req, res) {
       // Gemini : une limite de sortie trop basse peut couper ou vider la réponse.
       if (c.provider === 'gemini' && typeof payload.max_tokens === 'number') {
         payload.max_tokens = Math.max(payload.max_tokens, 4096);
+      }
+      // Claude (via OpenRouter) : pas de pénalités, et temperature + top_p ensemble peuvent être refusés.
+      if (c.provider === 'openrouter' && /^anthropic\//i.test(c.model)) {
+        delete payload.top_p;
+        delete payload.frequency_penalty;
+        delete payload.presence_penalty;
       }
       const attempt = new AbortController();
       const relay = () => attempt.abort();
@@ -932,6 +954,13 @@ const LISTERS = {
       }
     }
     return ids.filter((id) => /^@cf\//i.test(id));
+  },
+  // OpenRouter propose des centaines de modèles : on ne montre que Claude et DeepSeek (« Autre modèle » reste possible).
+  async openrouter(_cfg, key) {
+    const data = await getJson('https://openrouter.ai/api/v1/models', { authorization: `Bearer ${key}` });
+    return (data.data || [])
+      .map((m) => m.id)
+      .filter((id) => /^(anthropic|deepseek)\//i.test(id) && !/:batch$/i.test(id));
   },
 };
 
