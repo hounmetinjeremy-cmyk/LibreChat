@@ -7,7 +7,7 @@
  * l'objectif de l'utilisateur et les derniers appels d'outils tronqués, sans mots de passe ni clés (masqués).
  *
  * Réglages (secrets Fly) :
- *   EXPERT_HELP=off              désactive (actif par défaut dès qu'une clé OpenRouter existe)
+ *   EXPERT_HELP=on               ACTIVE l'expert (désactivé par défaut : il utilise un modèle payant)
  *   EXPERT_MODEL                 modèle de l'expert, « éditeur/modèle » OpenRouter (défaut anthropic/claude-sonnet-5.5)
  *   EXPERT_MAX_PER_CONV=2        consultations au maximum par conversation
  *   EXPERT_MAX_PER_DAY=100       consultations au maximum par jour, tous utilisateurs confondus
@@ -85,7 +85,7 @@ const SYSTEM =
  */
 async function consult({ hit, messages, key, url }) {
   try {
-    if (process.env.EXPERT_HELP === 'off' || !key || !url) {
+    if (process.env.EXPERT_HELP !== 'on' || !key || !url) {
       return null;
     }
     const conv = conversationKey(messages);

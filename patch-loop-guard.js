@@ -1,7 +1,7 @@
 /**
  * Branche le détecteur anti-patinage (api/server/routes/loopGuard.js) et l'expert d'appoint (expertHelp.js) dans le
- * proxy /ai-proxy, juste après la conversion des messages. Actif par défaut ; LOOP_GUARD=off le désactive et
- * EXPERT_HELP=off désactive seulement l'expert, sans redéployer le code.
+ * proxy /ai-proxy, juste après la conversion des messages. Le garde-fou est actif par défaut (LOOP_GUARD=off le
+ * désactive) ; l'expert, payant, ne s'active qu'avec EXPERT_HELP=on.
  * Jamais bloquant : si l'ancre est introuvable, aiModels.js reste tel quel (avertissement). Idempotent.
  */
 const fs = require('fs');
