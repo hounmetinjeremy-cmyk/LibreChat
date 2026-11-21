@@ -26,9 +26,11 @@ const edits = [
     ].join('\n'),
   ],
   [
+    // Facultatif : le routage Relace a été retiré du proxy (commit 4ff992a). S'il est absent, rien à adapter.
     'routage',
     "      if (c.provider === 'openrouter') {\n        payload.provider = OPENROUTER_ROUTING;\n      }\n",
     "      if (c.provider === 'openrouter' && !c.noRouting) {\n        payload.provider = OPENROUTER_ROUTING;\n      }\n",
+    true,
   ],
   [
     'échec',
@@ -52,15 +54,22 @@ if (!fs.existsSync('api/server/routes/particleRoute.js')) {
   console.warn('patch-particle : particleRoute.js absent, ignoré');
   process.exit(0);
 }
-for (const [label, anchor] of edits) {
+const optionalMissing = new Set();
+for (const [label, anchor, , optional] of edits) {
   const count = src.split(anchor).length - 1;
+  if (optional && count === 0) {
+    optionalMissing.add(label);
+    continue;
+  }
   if (count !== 1) {
     console.warn(`patch-particle : ancre « ${label} » trouvée ${count} fois (attendu : 1), ignoré`);
     process.exit(0);
   }
 }
-for (const [, anchor, replacement] of edits) {
-  src = src.replace(anchor, () => replacement);
+for (const [label, anchor, replacement] of edits) {
+  if (!optionalMissing.has(label)) {
+    src = src.replace(anchor, () => replacement);
+  }
 }
 fs.writeFileSync(file, src);
 console.log('patch-particle : appliqué');

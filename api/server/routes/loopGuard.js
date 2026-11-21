@@ -113,7 +113,35 @@ function detect(messages) {
   return null;
 }
 
-/** Retire l'outil qui patine et ajoute la consigne. Renvoie { name, reason } si le garde-fou a agi, sinon null. */
+/**
+ * Applique le garde-fou pour un blocage détecté.
+ *  - avec un conseil d'expert : l'outil est GARDÉ (l'IA en a besoin pour appliquer le conseil) et le conseil est ajouté ;
+ *  - sans conseil : l'outil est retiré et l'IA reçoit l'ordre de changer de méthode ou de s'arrêter.
+ */
+function applyHit(body, hit, advice) {
+  let content;
+  if (advice) {
+    content =
+      `[Garde-fou] Tu patines : l'outil « ${hit.name} » a été appelé avec ${hit.reason}, sans avancer. ` +
+      `Un expert a regardé tes derniers essais et te donne ses instructions. Applique-les à la lettre, ` +
+      `une étape à la fois, sans refaire ce qui a déjà échoué :\n${advice}`;
+  } else {
+    if (Array.isArray(body.tools)) {
+      body.tools = body.tools.filter((t) => !(t && t.function && t.function.name === hit.name));
+      if (body.tools.length === 0) {
+        delete body.tools;
+        delete body.tool_choice;
+      }
+    }
+    content =
+      `[Garde-fou] Tu patines : l'outil « ${hit.name} » a été appelé avec ${hit.reason}, sans avancer. ` +
+      `Il est retiré pour la suite. Change de méthode, ou arrête-toi : montre l'erreur exacte en une ligne ` +
+      `et demande à l'utilisateur ce qu'il veut faire. Ne rappelle pas cet outil.`;
+  }
+  body.messages = body.messages.concat({ role: 'user', content });
+}
+
+/** Version synchrone, sans expert : retire l'outil qui patine. Renvoie { name, reason } si le garde-fou a agi. */
 function apply(body) {
   if (!body || process.env.LOOP_GUARD === 'off') {
     return null;
@@ -122,21 +150,33 @@ function apply(body) {
   if (!hit) {
     return null;
   }
-  if (Array.isArray(body.tools)) {
-    body.tools = body.tools.filter((t) => !(t && t.function && t.function.name === hit.name));
-    if (body.tools.length === 0) {
-      delete body.tools;
-      delete body.tool_choice;
-    }
-  }
-  body.messages = body.messages.concat({
-    role: 'user',
-    content:
-      `[Garde-fou] Tu patines : l'outil « ${hit.name} » a été appelé avec ${hit.reason}, sans avancer. ` +
-      `Il est retiré pour la suite. Change de méthode, ou arrête-toi : montre l'erreur exacte en une ligne ` +
-      `et demande à l'utilisateur ce qu'il veut faire. Ne rappelle pas cet outil.`,
-  });
+  applyHit(body, hit, null);
   return hit;
 }
 
-module.exports = { detect, apply };
+/**
+ * Version complète utilisée par le proxy : si l'IA patine, `consult(hit, messages)` (expert d'appoint, voir
+ * expertHelp.js) est interrogé ; son conseil est injecté. Si l'expert est indisponible, retour au comportement simple.
+ * Renvoie { name, reason, advised } si le garde-fou a agi, sinon null.
+ */
+async function run(body, consult) {
+  if (!body || process.env.LOOP_GUARD === 'off') {
+    return null;
+  }
+  const hit = detect(body.messages);
+  if (!hit) {
+    return null;
+  }
+  let advice = null;
+  if (typeof consult === 'function') {
+    try {
+      advice = await consult(hit, body.messages);
+    } catch (e) {
+      advice = null;
+    }
+  }
+  applyHit(body, hit, advice || null);
+  return { ...hit, advised: Boolean(advice) };
+}
+
+module.exports = { detect, apply, run, collectCalls };
